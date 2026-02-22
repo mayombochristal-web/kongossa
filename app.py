@@ -1,94 +1,63 @@
 import streamlit as st
-import uuid
 from cryptography.fernet import Fernet
-from datetime import datetime
+import time
 
 # =====================================================
-# MÉMOIRE TRIADIQUE (Stockage temporaire en RAM)
+# MÉMOIRE COMMUNE (Le tunnel entre le Gabon et l'International)
 # =====================================================
-if 'VAULT' not in st.session_state:
-    st.session_state.VAULT = {}
+@st.cache_resource
+def get_global_vault():
+    """Cette fonction crée un coffre-fort unique partagé par tous les utilisateurs"""
+    return {}
 
-def delete_session(token):
-    """ Dissipation totale de la donnée """
-    if token in st.session_state.VAULT:
-        del st.session_state.VAULT[token]
+VAULT = get_global_vault()
 
 # =====================================================
-# INTERFACE ÉPURÉE
+# INTERFACE
 # =====================================================
 st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊")
+st.title("✊ FREE-KONGOSSA : Tunnel WIDA")
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #0E1117; color: white; }
-    .stButton>button { background-color: #2ecc71; color: black; font-weight: bold; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
+# Utilisation d'un code secret pour relier les deux mondes
+code = st.text_input("🔑 Entrez le CODE SECRET (ex: WIDA)", "").strip().upper()
 
-st.title("✊ FREE-KONGOSSA")
-st.write("Le tunnel sécurisé entre le Gabon et l'International.")
+tab1, tab2 = st.tabs(["📤 Émetteur (Gabon)", "📥 Récepteur (Famille)"])
 
-# Système de Tabs pour simplifier l'écran
-tab_send, tab_receive = st.tabs(["📤 ENVOYER (Gabon)", "📥 RECEVOIR (Famille)"])
-
-# =====================================================
-# 📤 PARTIE ÉMETTEUR (Toi au Gabon)
-# =====================================================
-with tab_send:
-    st.subheader("Préparer l'envoi")
-    # Choix d'un code simple pour la sœur
-    user_code = st.text_input("Créez un code secret (ex: GABON24)", "").strip().upper()
-    file_to_send = st.file_uploader("Document ou photo", type=['pdf', 'png', 'jpg', 'zip', 'docx'])
-
-    if file_to_send and user_code:
-        if st.button("🚀 Ouvrir le tunnel"):
-            # Chiffrement immédiat
-            key = Fernet.generate_key()
-            cipher = Fernet(key)
-            encrypted_data = cipher.encrypt(file_to_send.getvalue())
+with tab1:
+    st.subheader("Envoyer une preuve")
+    img = st.file_uploader("Choisissez la photo/document", type=['png', 'jpg', 'jpeg', 'pdf'])
+    if img and code:
+        if st.button("🚀 Ouvrir le tunnel vers l'International"):
+            # Chiffrement
+            cle = Fernet.generate_key()
+            donnees_chiffrees = Fernet(cle).encrypt(img.getvalue())
             
-            # Stockage avec timestamp pour auto-expiration (15 min)
-            st.session_state.VAULT[user_code] = {
-                "data": encrypted_data,
-                "key": key,
-                "name": file_to_send.name,
-                "time": datetime.now()
+            # Stockage dans le coffre GLOBAL (visible par la sœur)
+            VAULT[code] = {
+                "data": donnees_chiffrees,
+                "key": cle,
+                "nom": img.name,
+                "status": "ACTIF"
             }
-            st.success(f"✅ Tunnel ouvert ! Dis à ta sœur d'entrer le code : **{user_code}**")
-            st.warning("⚠️ Attention : Le tunnel s'autodétruira après son premier téléchargement.")
+            st.success(f"✅ Tunnel WIDA établi ! Dites à votre sœur d'entrer le code : {code}")
 
-# =====================================================
-# 📥 PARTIE RÉCEPTEUR (Ta sœur à l'étranger)
-# =====================================================
-with tab_receive:
-    st.subheader("Récupérer l'information")
-    access_code = st.text_input("Entrez le code reçu", "").strip().upper()
-
-    if access_code in st.session_state.VAULT:
-        doc = st.session_state.VAULT[access_code]
-        st.info(f"📦 Document détecté : **{doc['name']}**")
+with tab2:
+    st.subheader("Récupérer la vérité")
+    if code in VAULT:
+        item = VAULT[code]
+        st.info(f"📦 Document détecté : {item['nom']}")
         
-        # Le bouton de téléchargement déclenche l'effacement
-        try:
-            cipher = Fernet(doc['key'])
-            decrypted_data = cipher.decrypt(doc['data'])
-            
-            if st.download_button(
-                label="🔓 Télécharger et Effacer le lien",
-                data=decrypted_data,
-                file_name=doc['name'],
-                mime="application/octet-stream"
-            ):
-                # DISSIPATION : On efface tout juste après le clic
-                delete_session(access_code)
-                st.rerun()
+        if st.button("🔓 Afficher et Détruire"):
+            try:
+                # Déchiffrement
+                image_brute = Fernet(item['key']).decrypt(item['data'])
+                st.image(image_brute)
                 
-        except Exception as e:
-            st.error("Erreur de décodage. Le flux est peut-être corrompu.")
-    
-    elif access_code != "":
-        st.error("❌ Code invalide ou lien déjà expiré/utilisé.")
-
-# Nettoyage automatique des vieilles sessions (Sécurité de la RAM)
-# (Optionnel : effacer les sessions de plus de 30 min)
+                # DISSIPATION IMMÉDIATE (Le lien s'efface pour tout le monde)
+                del VAULT[code]
+                st.warning("⚠️ Information dissipée du serveur mondial.")
+            except Exception as e:
+                st.error("Erreur de synchronisation du flux.")
+    else:
+        if code:
+            st.write("⏳ En attente de l'ouverture du tunnel ou code déjà utilisé...")

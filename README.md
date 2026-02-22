@@ -1,138 +1,140 @@
-🔗 TTU-Sync — Partage Sécurisé Temporaire (P2P logique)
+✊ FREE-KONGOSSA – Mode d’emploi pour la Gen-Z
 
-TTU-Sync est une application Streamlit permettant le partage temporaire et chiffré de fichiers entre appareils (PC ↔ téléphone) via un lien sécurisé ou QR code, sans création de compte et sans stockage persistant.
+Transmets les infos vraies, même quand ils coupent le net. Personne ne pourra arrêter la vibes.
 
-🧠 Inspiré par une approche de résonance informationnelle :
-les données n’existent que tant que la session est vivante.
+---
 
-🚀 Fonctionnalités
-🔐 Sécurité
+🧠 Le concept en 1 cliché
 
-Chiffrement AES (Fernet) en mémoire
+FREE-KONGOSSA, c’est comme un jeu de société clandestin :
 
-Hash SHA-256 pour vérification d’intégrité
+· Tu prends un dossier ultra important (preuves, messages, fichiers).
+· L’app le découpe en 3 morceaux (comme des pièces de puzzle).
+· Tu envoies chaque pièce par un chemin différent (Bluetooth, Wi-Fi direct, clé USB…).
+· La personne qui reçoit les 3 pièces ET le code secret peut tout reconstruire.
 
-Clé de chiffrement éphémère
+Même si l’État coupe Internet ou surveille les réseaux, les 3 morceaux séparés ne veulent rien dire tout seuls. C’est comme si tu balançais une lettre dans 3 bouteilles différentes, et seule la personne qui a la carte au trésor peut les rassembler.
 
-Aucune écriture disque persistante
+---
 
-⏳ Temporalité
+📲 Comment ça marche (en 2 minutes)
 
-Lien temporaire (TTL configurable)
+Pour celui qui diffuse les infos (l’émetteur)
 
-Auto-destruction automatique
+1. Ouvre FREE-KONGOSSA sur ton navigateur (lien Streamlit).
+2. Clique sur l’onglet 📤 DIFFUSION.
+3. Dépose les fichiers que tu veux partager (photos, vidéos, PDF…).
+4. Appuie sur 🚀 Lancer la Brisure de Symétrie.
+5. L’app génère un code à 6 lettres (ex: XK7F9Z) et 3 fichiers à télécharger :
+   · 1_M_XK7F9Z.tst (Mémoire)
+   · 2_C_XK7F9Z.tst (Cohérence)
+   · 3_D_XK7F9Z.tst (Dissipation)
+6. Télécharge ces 3 fichiers et note le code (ou scanne le QR code).
+7. Envoie les fichiers à ton pote par Bluetooth, Wi-Fi Direct, ou même en les copiant sur une clé USB (sneakernet).
+8. Transmets le code par un autre canal (SMS, appel, papier, message vocal) – surtout pas avec les fichiers !
 
-Émetteur fermé = session détruite
+🎯 Règle d’or : les fichiers peuvent passer par des canaux publics, le code doit rester privé.
 
-📱 Mobilité
+---
 
-QR code généré automatiquement
+Pour celui qui reçoit (le récepteur)
 
-Accès immédiat depuis smartphone
+1. Ouvre FREE-KONGOSSA sur ton navigateur.
+2. Va dans l’onglet 📥 RÉCEPTION.
+3. Entre le code que ton contact t’a donné (en majuscules).
+4. Dépose les 3 fichiers (peu importe l’ordre, l’app les trie automatiquement).
+5. Si tout est bon, 🎈 des ballons explosent et tu vois “VÉRITÉ RESTAURÉE”.
+6. Télécharge le fichier original (SOUVERAINETE_GABON.zip).
 
-Compatible PC / Android / iOS (navigateur)
+Si ça ne marche pas, l’app te dit pourquoi :
 
-📦 Transfert
+· Code faux → le fichier est inutilisable sans le bon code.
+· Fichier manquant → continue la collecte.
 
-Multi-fichiers
+---
 
-Téléchargement individuel
+📡 Les canaux de transmission – le guide pratique
 
-Aucune limite imposée par l’app (hors Streamlit)
+1. Bluetooth – le classique indétectable
 
-🧩 Architecture Technique
-Utilisateur A (Émetteur)
-        |
-        |  lien + QR code
-        v
-Streamlit Cloud (RAM partagée)
-        ^
-        |
-Utilisateur B (Récepteur)
+· Active le Bluetooth sur les deux téléphones.
+· Sur Android : sélectionne les fichiers .tst → Partager → Bluetooth.
+· Sur iPhone : utilise AirDrop (c’est du Bluetooth amélioré).
+  ✅ Avantage : même sans Internet, ça marche jusqu’à 10 mètres.
 
+2. Wi-Fi Direct / Partage à proximité
 
-⚠️ Ce n’est pas du P2P réseau pur
-➡️ C’est un P2P logique sécurisé en mémoire, compatible Streamlit Cloud.
+· Sur Android : Partager → Nearby Share.
+· Sur Windows : Partage à proximité dans les paramètres.
+· Sur iPhone : AirDrop fait aussi Wi-Fi Direct.
+  ✅ Plus rapide que Bluetooth, idéal pour les vidéos lourdes.
 
-🛠 Stack Technique
+3. Le réseau local (même Wi-Fi, sans Internet)
 
-Python 3.11+
+· Connecte-toi au même Wi-Fi qu’un pote (même si la box n’a pas Internet).
+· Utilise une app comme Send Anywhere, Dukto, ou Landrop pour transférer les fichiers.
+  ✅ Portée d’une maison ou d’un quartier.
 
-Streamlit
+4. Sneakernet – le réseau physique
 
-cryptography (Fernet / AES)
+· Copie les fichiers sur une carte SD, clé USB, ou même un vieux téléphone.
+· Fais passer le support de main en main.
+  ✅ Ultra-sûr, zéro signal.
 
-qrcode
+5. QR codes – pour les tout petits bouts d’info
 
-Pillow
+· L’app génère un QR code du code de ralliement.
+· L’autre scanne, pas besoin de taper.
+  ✅ Pratique dans un rassemblement.
 
-📦 Installation locale
-git clone https://github.com/mayombochristal-web/ttu-sync-2030.git
-cd ttu-sync-2030
-pip install -r requirements.txt
-streamlit run app.py
+---
 
-🌍 Démo en ligne
+🔥 Astuces de pro pour ne pas se faire griller
 
-👉 https://ttu-sync-2030.streamlit.app
+· Mélange les canaux : envoie un fichier par Bluetooth, un autre par Wi-Fi Direct, et le dernier par clé USB. Si l’État surveille un canal, il n’aura qu’un morceau inutile.
+· Change le nom des fichiers : tu peux renommer 1_M_XK7F9Z.tst en musique.mp3 ou cours.pdf – l’app reconnaît le contenu, pas le nom.
+· Utilise des mots de passe visuels : pour le code de ralliement, choisis un mot facile à retenir pour vous deux (ex: SOLEIL).
+· Cache le code dans un message innocent : “RDV à 18h chez Koffi” → en fait les premières lettres donnent R18K, etc.
 
-🧪 Utilisation
-1️⃣ Émetteur
+---
 
-Ouvre l’onglet 📤 Émetteur
+💬 Le mindset : on est plus forts que la coupure
 
-Sélectionne un ou plusieurs fichiers
+Quand ils coupent Internet, ils croient qu’on va se taire. Mais nous, on a FREE-KONGOSSA.
 
-Clique sur 🚀 Démarrer session
+· Pas besoin de 4G pour s’envoyer des fichiers.
+· Pas besoin de WhatsApp pour organiser la résistance.
+· Chaque citoyen devient une antenne relais.
 
-Partage le lien ou le QR code
+Partage cette app autour de toi. Plus on sera nombreux à l’utiliser, plus le réseau humain deviendra invincible.
 
-2️⃣ Récepteur
+👉 Lien de l’app : [insère ici le lien Streamlit]
+👉 Code source : disponible pour ceux qui veulent vérifier qu’il n’y a pas de backdoor.
 
-Ouvre le lien ou scanne le QR code
+---
 
-Onglet 📥 Récepteur
+❓ FAQ – les questions que tu te poses
 
-Télécharge les fichiers avant expiration ⏳
+Q : Est-ce que c’est légal ?
+R : Chiffrer ses propres fichiers et les échanger est un droit. Si on t’accuse, dis que tu testais une app de transfert de photos de vacances.
 
-📁 Structure du projet
-ttu-sync-2030/
-├── app.py
-├── requirements.txt
-├── README.md
+Q : Et si je perds un fichier ?
+R : Demande à l’émetteur de le renvoyer (juste celui-là, pas besoin de tout refaire).
 
-⚠️ Limitations connues
+Q : Ça marche sur iPhone ?
+R : Oui, via le navigateur Safari. Pour AirDrop, c’est natif.
 
-Dépend de la RAM Streamlit
+Q : Le code peut être cassé ?
+R : 6 caractères, c’est 2 milliards de combinaisons. Pour un usage ponctuel, c’est suffisant. Si tu veux plus de sécurité, prends 8 lettres.
 
-La session disparaît si :
+Q : Pourquoi 3 fragments ?
+R : C’est le nombre magique : assez pour compliquer la surveillance, pas trop pour rester simple. Et ça fait un clin d’œil à la triade (Mémoire, Cohérence, Dissipation) – un peu de philosophie dans la matrice.
 
-le TTL expire
+---
 
-l’instance Cloud redémarre
+✊ Le peuple gabonais ne sera jamais silencieux.
+FREE-KONGOSSA, la voix qui traverse les murs.
 
-Pas de reprise après interruption
+---
 
-🔮 Améliorations possibles
-
-🔥 WebRTC (vrai P2P)
-
-📱 APK Android (WebView)
-
-🌐 Backend FastAPI + Redis
-
-🔐 Partage par mot de passe
-
-📊 Historique local chiffré
-
-🧠 Philosophie TTU
-
-Pas d’archive.
-Pas de trace.
-Seulement une résonance temporaire de l’information.
-
-👤 Auteur
-
-Christal Mayombo
-Projet expérimental — 2026
-TTU / MC³ Framework
+Guide rédigé par et pour la Gen-Z – à diffuser sans modération.

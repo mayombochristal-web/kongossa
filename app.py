@@ -1,146 +1,110 @@
 import streamlit as st
-import base64, uuid, hashlib, time
+import base64
+import uuid
+import hashlib
+import time
 from cryptography.fernet import Fernet
 from datetime import datetime
 import plotly.graph_objects as go
+import qrcode
+from io import BytesIO
 
-# =====================================================
-# LOGIQUE TST (M, C, D) APPLIQUÉE À LA RÉSISTANCE
-# =====================================================
-def calculate_resistance_invariant(session):
-    now_ts = datetime.utcnow().timestamp()
-    # M (Mémoire) : Temps avant auto-dissipation des traces
-    M = (session["expires"] - now_ts) / 300 
-    # C (Cohérence) : Intégrité des 3 fragments réunis
-    C = 1.0 if session["fragments_received"] == 3 else 0.3
-    # D (Dissipation) : Risque de compromission (baisse l'indice si trop d'essais)
-    D = session.get("failed_attempts", 0) * 0.2
-    
-    return max(0.0, (M * C) - D)
+# ===============================
+# Fonctions de dérivation de clé
+# ===============================
+def derive_key_from_token(token: str) -> bytes:
+    """Transforme un token (6 caractères) en clé Fernet valide (32 octets base64)."""
+    # On utilise SHA256 pour obtenir 32 octets, puis on encode en base64 (Fernet exige ce format)
+    key = hashlib.sha256(token.encode()).digest()
+    return base64.urlsafe_b64encode(key)
 
-def draw_resistance_radar(chi):
-    fig = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = chi,
-        title = {'text': "Indice de Liberté (χ)", 'font': {'size': 20}},
-        gauge = {
-            'axis': {'range': [0, 1]},
-            'bar': {'color': "#367588"}, # Bleu profond (Sagesse)
-            'steps': [
-                {'range': [0, 0.3], 'color': "#820000"}, # Danger / Censure
-                {'range': [0.3, 0.7], 'color': "#f4d03f"}, # Vigilance
-                {'range': [0.7, 1], 'color': "#2ecc71"}], # Libre / Cohérent
-            'threshold': {'line': {'color': "white", 'width': 4}, 'value': 0.1}
-        }))
-    fig.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=20), paper_bgcolor="#1a1a1a", font={'color': "white"})
-    return fig
+def reconstruct_payload(uploaded_files):
+    """Trie les fragments par nom de fichier (inchangé)."""
+    sorted_files = sorted(uploaded_files, key=lambda x: x.name)
+    combined_data = b"".join([f.getvalue() for f in sorted_files])
+    return combined_data
 
-# =====================================================
-# CONFIGURATION UI
-# =====================================================
+# ===============================
+# Interface
+# ===============================
 st.set_page_config("FREE-KONGOSSA", layout="wide", page_icon="✊")
 
-# Custom CSS pour une ambiance "Résistance"
 st.markdown("""
     <style>
-    .stApp { background-color: #1a1a1a; color: #ffffff; }
-    .stButton>button { width: 100%; border-radius: 20px; border: 1px solid #2ecc71; background-color: transparent; color: white; }
-    .stButton>button:hover { background-color: #2ecc71; color: black; }
+    .stApp { background-color: #101214; color: #e0e0e0; }
+    .status-box { padding: 15px; border-radius: 10px; border: 1px solid #2ecc71; background-color: #1a1c1e; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("✊ FREE-KONGOSSA")
-st.markdown("*L'information est un droit, la TST est notre bouclier.*")
+st.subheader("Protocole de Transmission en Zone de Censure")
 
-if 'KONGOSSA_VAULT' not in st.session_state:
-    st.session_state.KONGOSSA_VAULT = {}
+tabs = st.tabs(["📤 DIFFUSION (Émetteur)", "📥 RÉCEPTION (Peuple)"])
 
-tabs = st.tabs(["📤 Alerte (Émetteur)", "📥 Vérité (Récepteur)"])
-
-# =====================================================
-# 📤 MODULE ÉMETTEUR : FRAGMENTATION TRIADIQUE
-# =====================================================
+# ===============================
+# 📤 ÉMETTEUR
+# ===============================
 with tabs[0]:
-    st.subheader("🛡️ Fragmenter une Information")
-    label = st.text_input("Sujet de l'alerte", "Urgent")
-    files = st.file_uploader("Preuves (Photos, PDF, Logs)", accept_multiple_files=True)
+    st.info("🛠️ **Prérequis de Diffusion :** Activez votre **Point d'accès Mobile** ou **Bluetooth** si le réseau internet est instable. Cela permet aux personnes proches de capter vos ondes localement.")
     
-    if files and st.button("🚀 Diffuser les Fragments"):
+    files = st.file_uploader("Preuves à fragmenter", accept_multiple_files=True)
+    if files and st.button("🚀 Lancer la Brisure de Symétrie"):
+        # Génération d'un token de 6 caractères
         token = str(uuid.uuid4())[:6].upper()
-        key = Fernet.generate_key()
-        f_key = Fernet(key)
+        # Clé dérivée du token (plus besoin de stockage)
+        key = derive_key_from_token(token)
         
-        # Fragmentation physique du fichier de preuves
-        all_data = b""
-        for f in files: all_data += f.getvalue()
+        full_bytes = b"".join([f.getvalue() for f in files])
+        encrypted = Fernet(key).encrypt(full_bytes)
         
-        # Chiffrement TST
-        encrypted_data = f_key.encrypt(all_data)
+        # Division
+        p = len(encrypted) // 3
+        m_part = encrypted[:p]
+        c_part = encrypted[p:p*2]
+        d_part = encrypted[p*2:]
         
-        # Division en 3 Fragments (M, C, D)
-        l = len(encrypted_data)
-        p = l // 3
+        st.success(f"⚡ CODE DE RALLIEMENT : {token}")
         
-        st.session_state.KONGOSSA_VAULT[token] = {
-            "key": key,
-            "M": encrypted_data[:p],
-            "C": encrypted_data[p:p*2],
-            "D": encrypted_data[p*2:],
-            "expires": datetime.utcnow().timestamp() + 300, # 5 minutes de vie
-            "fragments_received": 0,
-            "failed_attempts": 0
-        }
-        
-        st.success(f"FLUX ACTIF. Code de ralliement : {token}")
-        st.info("Distribuez les 3 ondes ci-dessous par 3 canaux différents (SMS, WhatsApp, Signal).")
+        # Génération d'un QR code pour le token
+        qr = qrcode.make(token)
+        buf = BytesIO()
+        qr.save(buf, format="PNG")
+        buf.seek(0)
+        st.image(buf, caption="Scannez ce QR pour obtenir le code", width=150)
         
         c1, c2, c3 = st.columns(3)
-        c1.download_button("📦 Onde MÉMOIRE", st.session_state.KONGOSSA_VAULT[token]["M"], f"M_{token}.tst")
-        c2.download_button("📦 Onde COHÉRENCE", st.session_state.KONGOSSA_VAULT[token]["C"], f"C_{token}.tst")
-        c3.download_button("📦 Onde DISSIPATION", st.session_state.KONGOSSA_VAULT[token]["D"], f"D_{token}.tst")
+        c1.download_button("📦 Onde MÉMOIRE", m_part, f"1_M_{token}.tst")
+        c2.download_button("📦 Onde COHÉRENCE", c_part, f"2_C_{token}.tst")
+        c3.download_button("📦 Onde DISSIPATION", d_part, f"3_D_{token}.tst")
+        
+        st.markdown("---")
+        st.markdown("**🔁 Instructions pour l’émetteur :** transmettez ces trois fichiers à votre contact par **Bluetooth**, **Wi‑Fi Direct** ou tout autre moyen. Le code de ralliement doit être communiqué séparément (oral, SMS, papier).")
 
-# =====================================================
-# 📥 MODULE RÉCEPTEUR : RECONSTITUTION SOUVERAINE
-# =====================================================
+# ===============================
+# 📥 RÉCEPTEUR
+# ===============================
 with tabs[1]:
-    st.subheader("🔓 Reconstituer la Vérité")
-    input_token = st.text_input("Code de ralliement")
+    st.markdown("""
+    ### 📡 Mode d'emploi Résilience :
+    1. **Internet coupé ?** Demandez à l'émetteur de vous envoyer les 3 fichiers via **Bluetooth** ou **Partage de proximité**.
+    2. **Localisation :** Assurez-vous que votre **capteur Wi-Fi est actif** (même sans internet) pour stabiliser la réception.
+    """)
     
-    col_up, col_status = st.columns([1, 1])
+    code = st.text_input("Code de Ralliement (6 caractères)").strip().upper()
+    fragments = st.file_uploader("Déposez les 3 fragments (ordre indifférent)", accept_multiple_files=True)
     
-    with col_up:
-        frag_m = st.file_uploader("Importer Onde M", type="tst")
-        frag_c = st.file_uploader("Importer Onde C", type="tst")
-        frag_d = st.file_uploader("Importer Onde D", type="tst")
-        
-    if input_token in st.session_state.KONGOSSA_VAULT:
-        sess = st.session_state.KONGOSSA_VAULT[input_token]
-        
-        # Mise à jour de la cohérence
-        received = 0
-        if frag_m: received += 1
-        if frag_c: received += 1
-        if frag_d: received += 1
-        st.session_state.KONGOSSA_VAULT[input_token]["fragments_received"] = received
-        
-        chi = calculate_resistance_invariant(sess)
-        
-        with col_status:
-            st.plotly_chart(draw_resistance_radar(chi), use_container_width=True)
+    if code and len(fragments) == 3:
+        try:
+            # Recalcul de la clé à partir du code saisi
+            key = derive_key_from_token(code)
+            data_fusion = reconstruct_payload(fragments)
+            f = Fernet(key)
+            final_file = f.decrypt(data_fusion)
             
-        if chi > 0.6 and received == 3:
             st.balloons()
-            st.success("SYMÉTRIE RÉTABLIE : Information décodée.")
-            
-            # Reconstitution physique des données
-            full_data = frag_m.getvalue() + frag_c.getvalue() + frag_d.getvalue()
-            decrypted = Fernet(sess["key"]).decrypt(full_data)
-            
-            st.download_button("⬇️ TÉLÉCHARGER LA VÉRITÉ", decrypted, "VERITE_GABON.zip")
-        elif received > 0:
-            st.warning(f"Fragments collectés : {received}/3. La Triade est incomplète.")
-    else:
-        if input_token: st.error("Code inconnu ou supprimé par le système de sécurité.")
-
-st.markdown("---")
-st.caption("© 2026 - FREE-KONGOSSA : Technologie TST pour la liberté du peuple.")
+            st.success("🔓 VÉRITÉ RESTAURÉE : La Triade a fusionné avec succès.")
+            st.download_button("💾 Ouvrir le Dossier Libéré", final_file, "SOUVERAINETE_GABON.zip")
+        except Exception as e:
+            st.error(f"🚨 ÉCHEC DE FUSION : {str(e)}")
+    elif len(fragments) > 0:
+        st.warning(f"Collecte en cours : {len(fragments)}/3 fragments détectés.")

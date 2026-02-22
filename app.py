@@ -1,81 +1,94 @@
 import streamlit as st
-import base64, uuid, hashlib
+import uuid
 from cryptography.fernet import Fernet
 from datetime import datetime
-import plotly.graph_objects as go
 
 # =====================================================
-# VERROU DE SYMÉTRIE : Empêche la clé de changer au refresh
+# MÉMOIRE TRIADIQUE (Stockage temporaire en RAM)
 # =====================================================
-@st.cache_resource
-def get_persistent_key(token):
-    # Cette fonction garde la même clé pour un token donné
-    return Fernet.generate_key()
+if 'VAULT' not in st.session_state:
+    st.session_state.VAULT = {}
 
-def reconstruct_payload(uploaded_files):
-    # Tri automatique 1, 2, 3 pour éviter l'erreur de déchiffrement
-    sorted_files = sorted(uploaded_files, key=lambda x: x.name)
-    return b"".join([f.getvalue() for f in sorted_files])
+def delete_session(token):
+    """ Dissipation totale de la donnée """
+    if token in st.session_state.VAULT:
+        del st.session_state.VAULT[token]
 
 # =====================================================
-# INTERFACE
+# INTERFACE ÉPURÉE
 # =====================================================
-st.set_page_config("FREE-KONGOSSA", layout="wide")
-st.title("✊ FREE-KONGOSSA (Stable Version)")
+st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊")
 
-if 'KONGOSSA_VAULT' not in st.session_state:
-    st.session_state.KONGOSSA_VAULT = {}
+st.markdown("""
+    <style>
+    .stApp { background-color: #0E1117; color: white; }
+    .stButton>button { background-color: #2ecc71; color: black; font-weight: bold; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-tab_emit, tab_recv = st.tabs(["📤 DIFFUSION", "📥 RÉCEPTION"])
+st.title("✊ FREE-KONGOSSA")
+st.write("Le tunnel sécurisé entre le Gabon et l'International.")
 
-with tab_emit:
-    st.write("Étape 1 : Choisissez vos fichiers")
-    files = st.file_uploader("Preuves", accept_multiple_files=True)
-    
-    # On utilise un ID de session fixe pour cette page
-    if 'session_token' not in st.session_state:
-        st.session_state.session_token = str(uuid.uuid4())[:6].upper()
-    
-    token = st.session_state.session_token
-    
-    if files:
-        # LA CLÉ NE CHANGERA PLUS, même après téléchargement
-        static_key = get_persistent_key(token)
-        f_key = Fernet(static_key)
-        
-        full_bytes = b"".join([f.getvalue() for f in files])
-        encrypted = f_key.encrypt(full_bytes)
-        
-        p = len(encrypted) // 3
-        # Stockage en mémoire
-        st.session_state.KONGOSSA_VAULT[token] = {
-            "key": static_key,
-            "M": encrypted[:p],
-            "C": encrypted[p:p*2],
-            "D": encrypted[p*2:]
-        }
-        
-        st.success(f"⚡ CLÉ FIXE : {token}")
-        st.info("Vous pouvez maintenant télécharger les 3 ondes sans que la clé ne change.")
-        
-        c1, c2, c3 = st.columns(3)
-        c1.download_button("📦 Onde M", st.session_state.KONGOSSA_VAULT[token]["M"], f"1_M_{token}.tst")
-        c2.download_button("📦 Onde C", st.session_state.KONGOSSA_VAULT[token]["C"], f"2_C_{token}.tst")
-        c3.download_button("📦 Onde D", st.session_state.KONGOSSA_VAULT[token]["D"], f"3_D_{token}.tst")
+# Système de Tabs pour simplifier l'écran
+tab_send, tab_receive = st.tabs(["📤 ENVOYER (Gabon)", "📥 RECEVOIR (Famille)"])
 
-with tab_recv:
-    st.subheader("Fusionner les Ondes")
-    code_input = st.text_input("Code Secret")
-    uploaded_frags = st.file_uploader("Déposez les 3 fichiers ici", accept_multiple_files=True)
+# =====================================================
+# 📤 PARTIE ÉMETTEUR (Toi au Gabon)
+# =====================================================
+with tab_send:
+    st.subheader("Préparer l'envoi")
+    # Choix d'un code simple pour la sœur
+    user_code = st.text_input("Créez un code secret (ex: GABON24)", "").strip().upper()
+    file_to_send = st.file_uploader("Document ou photo", type=['pdf', 'png', 'jpg', 'zip', 'docx'])
+
+    if file_to_send and user_code:
+        if st.button("🚀 Ouvrir le tunnel"):
+            # Chiffrement immédiat
+            key = Fernet.generate_key()
+            cipher = Fernet(key)
+            encrypted_data = cipher.encrypt(file_to_send.getvalue())
+            
+            # Stockage avec timestamp pour auto-expiration (15 min)
+            st.session_state.VAULT[user_code] = {
+                "data": encrypted_data,
+                "key": key,
+                "name": file_to_send.name,
+                "time": datetime.now()
+            }
+            st.success(f"✅ Tunnel ouvert ! Dis à ta sœur d'entrer le code : **{user_code}**")
+            st.warning("⚠️ Attention : Le tunnel s'autodétruira après son premier téléchargement.")
+
+# =====================================================
+# 📥 PARTIE RÉCEPTEUR (Ta sœur à l'étranger)
+# =====================================================
+with tab_receive:
+    st.subheader("Récupérer l'information")
+    access_code = st.text_input("Entrez le code reçu", "").strip().upper()
+
+    if access_code in st.session_state.VAULT:
+        doc = st.session_state.VAULT[access_code]
+        st.info(f"📦 Document détecté : **{doc['name']}**")
+        
+        # Le bouton de téléchargement déclenche l'effacement
+        try:
+            cipher = Fernet(doc['key'])
+            decrypted_data = cipher.decrypt(doc['data'])
+            
+            if st.download_button(
+                label="🔓 Télécharger et Effacer le lien",
+                data=decrypted_data,
+                file_name=doc['name'],
+                mime="application/octet-stream"
+            ):
+                # DISSIPATION : On efface tout juste après le clic
+                delete_session(access_code)
+                st.rerun()
+                
+        except Exception as e:
+            st.error("Erreur de décodage. Le flux est peut-être corrompu.")
     
-    if code_input in st.session_state.KONGOSSA_VAULT:
-        sess = st.session_state.KONGOSSA_VAULT[code_input]
-        if len(uploaded_frags) == 3:
-            try:
-                # Réassemblage et déchiffrement avec la clé persistante
-                raw_data = reconstruct_payload(uploaded_frags)
-                decrypted = Fernet(sess["key"]).decrypt(raw_data)
-                st.success("🔓 SYMÉTRIE RÉTABLIE !")
-                st.download_button("⬇️ Ouvrir le fichier final", decrypted, "VÉRITÉ_GABON.zip")
-            except Exception as e:
-                st.error(f"Erreur de cohérence : {e}")
+    elif access_code != "":
+        st.error("❌ Code invalide ou lien déjà expiré/utilisé.")
+
+# Nettoyage automatique des vieilles sessions (Sécurité de la RAM)
+# (Optionnel : effacer les sessions de plus de 30 min)

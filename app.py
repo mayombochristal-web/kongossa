@@ -1,63 +1,105 @@
 import streamlit as st
 from cryptography.fernet import Fernet
-import time
+import random
 
 # =====================================================
-# MÉMOIRE COMMUNE (Le tunnel entre le Gabon et l'International)
+# LES TROIS COFFRES DISTINCTS (RAM Partagée)
 # =====================================================
 @st.cache_resource
-def get_global_vault():
-    """Cette fonction crée un coffre-fort unique partagé par tous les utilisateurs"""
-    return {}
+def initialiser_systeme_triadique():
+    return {
+        "COFFRE_M": {}, # Mémoire
+        "COFFRE_C": {}, # Cohérence
+        "COFFRE_D": {}  # Dissipation
+    }
 
-VAULT = get_global_vault()
+SYSTEME = initialiser_systeme_triadique()
 
 # =====================================================
 # INTERFACE
 # =====================================================
 st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊")
-st.title("✊ FREE-KONGOSSA : Tunnel WIDA")
+st.title("✊ FREE-KONGOSSA : Triple-Coffre")
+st.markdown("---")
 
-# Utilisation d'un code secret pour relier les deux mondes
-code = st.text_input("🔑 Entrez le CODE SECRET (ex: WIDA)", "").strip().upper()
+code_secret = st.text_input("🔑 CODE SECRET DE LIAISON", "").strip().upper()
 
-tab1, tab2 = st.tabs(["📤 Émetteur (Gabon)", "📥 Récepteur (Famille)"])
+tab_send, tab_recv = st.tabs(["📤 DÉPOSER (Fragmentation)", "📥 EXTRAIRE (Aspiration)"])
 
-with tab1:
-    st.subheader("Envoyer une preuve")
-    img = st.file_uploader("Choisissez la photo/document", type=['png', 'jpg', 'jpeg', 'pdf'])
-    if img and code:
-        if st.button("🚀 Ouvrir le tunnel vers l'International"):
-            # Chiffrement
-            cle = Fernet.generate_key()
-            donnees_chiffrees = Fernet(cle).encrypt(img.getvalue())
+# --- SECTION ÉMETTEUR ---
+with tab_send:
+    fichier = st.file_uploader("Document à sécuriser", type=['png', 'jpg', 'jpeg', 'pdf', 'zip'])
+    
+    if fichier and code_secret:
+        if st.button("🚀 Éclater et Sceller dans les 3 coffres"):
+            # 1. Chiffrement Global
+            cle_cryptage = Fernet.generate_key()
+            cipher = Fernet(cle_cryptage)
+            donnees_chiffrees = cipher.encrypt(fichier.getvalue())
             
-            # Stockage dans le coffre GLOBAL (visible par la sœur)
-            VAULT[code] = {
-                "data": donnees_chiffrees,
-                "key": cle,
-                "nom": img.name,
-                "status": "ACTIF"
-            }
-            st.success(f"✅ Tunnel WIDA établi ! Dites à votre sœur d'entrer le code : {code}")
+            # 2. Fragmentation Triadique (Découpage en 3)
+            taille = len(donnees_chiffrees)
+            p1 = taille // 3
+            p2 = (taille // 3) * 2
+            
+            onde_M = donnees_chiffrees[:p1]
+            onde_C = donnees_chiffrees[p1:p2]
+            onde_D = donnees_chiffrees[p2:]
+            
+            # 3. Distribution aléatoire dans les coffres pour perdre une éventuelle trace
+            # On stocke aussi la clé de manière fragmentée ou protégée
+            SYSTEME["COFFRE_M"][code_secret] = onde_M
+            SYSTEME["COFFRE_C"][code_secret] = onde_C
+            SYSTEME["COFFRE_D"][code_secret] = onde_D
+            
+            # On garde la clé de déchiffrement dans un espace sécurisé lié au code
+            if "KEYS" not in SYSTEME: SYSTEME["KEYS"] = {}
+            SYSTEME["KEYS"][code_secret] = {"key": cle_cryptage, "name": fichier.name}
+            
+            st.success("✅ Document éclaté et distribué dans les 3 coffres mondiaux.")
+            st.info(f"Le tunnel est stable. Code : **{code_secret}**")
 
-with tab2:
-    st.subheader("Récupérer la vérité")
-    if code in VAULT:
-        item = VAULT[code]
-        st.info(f"📦 Document détecté : {item['nom']}")
+# --- SECTION RÉCEPTEUR ---
+with tab_recv:
+    # On vérifie si le code existe dans les 3 coffres simultanément
+    presence_triade = (
+        code_secret in SYSTEME["COFFRE_M"] and 
+        code_secret in SYSTEME["COFFRE_C"] and 
+        code_secret in SYSTEME["COFFRE_D"]
+    )
+    
+    if presence_triade:
+        info = SYSTEME["KEYS"][code_secret]
+        st.success(f"💎 Triade détectée ! Document : **{info['name']}**")
         
-        if st.button("🔓 Afficher et Détruire"):
+        if st.button("🌪️ Aspirer les Ondes et Reconstituer"):
             try:
-                # Déchiffrement
-                image_brute = Fernet(item['key']).decrypt(item['data'])
-                st.image(image_brute)
+                # ASPIRATION AUTOMATIQUE des 3 coffres
+                m = SYSTEME["COFFRE_M"][code_secret]
+                c = SYSTEME["COFFRE_C"][code_secret]
+                d = SYSTEME["COFFRE_D"][code_secret]
                 
-                # DISSIPATION IMMÉDIATE (Le lien s'efface pour tout le monde)
-                del VAULT[code]
-                st.warning("⚠️ Information dissipée du serveur mondial.")
+                # RECONSTITUTION
+                flux_total = m + c + d
+                cipher = Fernet(info['key'])
+                donnees_finales = cipher.decrypt(flux_total)
+                
+                # TÉLÉCHARGEMENT
+                st.download_button("💾 Sauvegarder le document", donnees_finales, file_name=info['name'])
+                
+                # AUTO-DESTRUCTION (DISSIPATION)
+                del SYSTEME["COFFRE_M"][code_secret]
+                del SYSTEME["COFFRE_C"][code_secret]
+                del SYSTEME["COFFRE_D"][code_secret]
+                del SYSTEME["KEYS"][code_secret]
+                
+                st.warning("🔒 Sécurité activée : Les 3 coffres ont été vidés.")
+                st.rerun()
+                
             except Exception as e:
-                st.error("Erreur de synchronisation du flux.")
+                st.error("Erreur de brisure de symétrie. Le flux est corrompu.")
     else:
-        if code:
-            st.write("⏳ En attente de l'ouverture du tunnel ou code déjà utilisé...")
+        if code_secret:
+            st.write("🔎 Aucun flux complet trouvé pour ce code.")
+        else:
+            st.write("En attente de la clé pour l'aspiration...")

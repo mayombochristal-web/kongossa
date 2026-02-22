@@ -1,105 +1,111 @@
 import streamlit as st
 from cryptography.fernet import Fernet
-import random
+import datetime
 
 # =====================================================
-# LES TROIS COFFRES DISTINCTS (RAM Partagée)
+# ARCHITECTURE TRIPLE-COFFRE (Mémoire Vive Partagée)
 # =====================================================
 @st.cache_resource
 def initialiser_systeme_triadique():
     return {
-        "COFFRE_M": {}, # Mémoire
-        "COFFRE_C": {}, # Cohérence
-        "COFFRE_D": {}  # Dissipation
+        "COFFRE_M": {}, # Fragment Mémoire
+        "COFFRE_C": {}, # Fragment Cohérence
+        "COFFRE_D": {}, # Fragment Dissipation
+        "METADATA": {}  # Clés et Noms de fichiers
     }
 
 SYSTEME = initialiser_systeme_triadique()
 
 # =====================================================
-# INTERFACE
+# INTERFACE SOUVERAINE
 # =====================================================
-st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊")
-st.title("✊ FREE-KONGOSSA : Triple-Coffre")
+st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="wide")
+st.title("✊ FREE-KONGOSSA : Transmetteur Universel")
 st.markdown("---")
 
-code_secret = st.text_input("🔑 CODE SECRET DE LIAISON", "").strip().upper()
+# Zone de saisie du code (Le lien entre vous)
+code_secret = st.text_input("🔑 CODE SECRET DE LIAISON", help="Entrez le code convenu avec votre proche").strip().upper()
 
-tab_send, tab_recv = st.tabs(["📤 DÉPOSER (Fragmentation)", "📥 EXTRAIRE (Aspiration)"])
+tab_emit, tab_recv = st.tabs(["📤 ÉMETTEUR (Déposer tout type de fichier)", "📥 RÉCEPTEUR (Aspirer la vérité)"])
 
 # --- SECTION ÉMETTEUR ---
-with tab_send:
-    fichier = st.file_uploader("Document à sécuriser", type=['png', 'jpg', 'jpeg', 'pdf', 'zip'])
+with tab_emit:
+    st.subheader("📦 Préparer le colis numérique")
+    fichier = st.file_uploader("Document, Vidéo, Audio, Archive...", type=None) # Accepte tout
     
     if fichier and code_secret:
-        if st.button("🚀 Éclater et Sceller dans les 3 coffres"):
-            # 1. Chiffrement Global
-            cle_cryptage = Fernet.generate_key()
-            cipher = Fernet(cle_cryptage)
-            donnees_chiffrees = cipher.encrypt(fichier.getvalue())
+        if st.button("🚀 Éclater et Sceller dans les Coffres"):
+            # 1. Chiffrement Global (Fernet)
+            cle_unique = Fernet.generate_key()
+            cipher = Fernet(cle_unique)
+            donnees_brutes = fichier.getvalue()
+            donnees_chiffrees = cipher.encrypt(donnees_brutes)
             
-            # 2. Fragmentation Triadique (Découpage en 3)
+            # 2. Fragmentation Triadique
             taille = len(donnees_chiffrees)
-            p1 = taille // 3
-            p2 = (taille // 3) * 2
+            p1, p2 = taille // 3, (taille // 3) * 2
             
-            onde_M = donnees_chiffrees[:p1]
-            onde_C = donnees_chiffrees[p1:p2]
-            onde_D = donnees_chiffrees[p2:]
+            # 3. Distribution dans les 3 coffres
+            SYSTEME["COFFRE_M"][code_secret] = donnees_chiffrees[:p1]
+            SYSTEME["COFFRE_C"][code_secret] = donnees_chiffrees[p1:p2]
+            SYSTEME["COFFRE_D"][code_secret] = donnees_chiffrees[p2:]
             
-            # 3. Distribution aléatoire dans les coffres pour perdre une éventuelle trace
-            # On stocke aussi la clé de manière fragmentée ou protégée
-            SYSTEME["COFFRE_M"][code_secret] = onde_M
-            SYSTEME["COFFRE_C"][code_secret] = onde_C
-            SYSTEME["COFFRE_D"][code_secret] = onde_D
+            # 4. Sauvegarde des métadonnées (Nom, Type, Clé)
+            SYSTEME["METADATA"][code_secret] = {
+                "key": cle_unique,
+                "name": fichier.name,
+                "type": fichier.type,
+                "time": datetime.datetime.now()
+            }
             
-            # On garde la clé de déchiffrement dans un espace sécurisé lié au code
-            if "KEYS" not in SYSTEME: SYSTEME["KEYS"] = {}
-            SYSTEME["KEYS"][code_secret] = {"key": cle_cryptage, "name": fichier.name}
-            
-            st.success("✅ Document éclaté et distribué dans les 3 coffres mondiaux.")
-            st.info(f"Le tunnel est stable. Code : **{code_secret}**")
+            st.success(f"✅ Flux scellé ! Type détecté : {fichier.type}")
+            st.info(f"Dites à votre proche d'utiliser le code : **{code_secret}**")
 
 # --- SECTION RÉCEPTEUR ---
 with tab_recv:
-    # On vérifie si le code existe dans les 3 coffres simultanément
-    presence_triade = (
+    st.subheader("🌪️ Aspiration du Flux")
+    
+    # Vérification de l'existence de la Triade pour ce code
+    triade_complete = (
         code_secret in SYSTEME["COFFRE_M"] and 
         code_secret in SYSTEME["COFFRE_C"] and 
         code_secret in SYSTEME["COFFRE_D"]
     )
     
-    if presence_triade:
-        info = SYSTEME["KEYS"][code_secret]
-        st.success(f"💎 Triade détectée ! Document : **{info['name']}**")
+    if triade_complete:
+        meta = SYSTEME["METADATA"][code_secret]
+        st.write(f"📁 Un fichier **{meta['name']}** est prêt à être aspiré.")
         
-        if st.button("🌪️ Aspirer les Ondes et Reconstituer"):
+        if st.button("🔓 Déclencher l'aspiration et la fusion"):
             try:
-                # ASPIRATION AUTOMATIQUE des 3 coffres
+                # 1. Récupération des 3 ondes
                 m = SYSTEME["COFFRE_M"][code_secret]
                 c = SYSTEME["COFFRE_C"][code_secret]
                 d = SYSTEME["COFFRE_D"][code_secret]
                 
-                # RECONSTITUTION
+                # 2. Reconstitution et Déchiffrement
                 flux_total = m + c + d
-                cipher = Fernet(info['key'])
+                cipher = Fernet(meta['key'])
                 donnees_finales = cipher.decrypt(flux_total)
                 
-                # TÉLÉCHARGEMENT
-                st.download_button("💾 Sauvegarder le document", donnees_finales, file_name=info['name'])
+                # 3. Mise à disposition
+                st.download_button(
+                    label="💾 Sauvegarder sur cet appareil",
+                    data=donnees_finales,
+                    file_name=meta['name'],
+                    mime=meta['type']
+                )
                 
-                # AUTO-DESTRUCTION (DISSIPATION)
+                # 4. DISSIPATION (Effacement immédiat des 3 coffres + métadonnées)
                 del SYSTEME["COFFRE_M"][code_secret]
                 del SYSTEME["COFFRE_C"][code_secret]
                 del SYSTEME["COFFRE_D"][code_secret]
-                del SYSTEME["KEYS"][code_secret]
+                del SYSTEME["METADATA"][code_secret]
                 
-                st.warning("🔒 Sécurité activée : Les 3 coffres ont été vidés.")
-                st.rerun()
+                st.warning("🔒 Le tunnel s'est refermé. Les données sont effacées du serveur.")
                 
             except Exception as e:
-                st.error("Erreur de brisure de symétrie. Le flux est corrompu.")
+                st.error("Rupture de symétrie : le flux a été altéré.")
     else:
         if code_secret:
-            st.write("🔎 Aucun flux complet trouvé pour ce code.")
-        else:
-            st.write("En attente de la clé pour l'aspiration...")
+            st.write("🔎 Aucun flux complet trouvé. Attente de l'émetteur...")

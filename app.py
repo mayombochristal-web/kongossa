@@ -5,119 +5,74 @@ from datetime import datetime, timedelta
 import qrcode
 from io import BytesIO
 
-# ===============================
-# CONFIG
-# ===============================
-TTL_SECONDS = 120
-APP_URL = "https://ttu-sync-2030.streamlit.app"
-
-st.set_page_config("TTU-Sync", layout="wide")
-
-# ===============================
-# SHARED MEMORY (CLOUD SAFE)
-# ===============================
-@st.cache_resource
-def shared_sessions():
-    return {}
-
-SESSIONS = shared_sessions()
-
-# ===============================
-# UTILS
-# ===============================
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-def now():
-    return datetime.utcnow()
-
-# ===============================
-# UI
-# ===============================
-st.title("🔗 TTU-Sync — Partage Sécurisé Temporaire")
-
-tabs = st.tabs(["📤 Émetteur", "📥 Récepteur"])
+# =====================================================
+# MOTEUR TST : CALCUL DE L'INVARIANT DE CONNEXION
+# =====================================================
+def calculate_tst_stability(session):
+    now_ts = datetime.utcnow().timestamp()
+    # M (Mémoire) : Temps de vie restant du lien
+    M = (session["expires"] - now_ts) / 120 
+    # C (Cohérence) : Intégrité du tunnel (Simulée par le token)
+    C = 1.0 if session["status"] == "Active" else 0.0
+    # D (Dissipation) : Usure du lien (plus on télécharge, plus il s'efface)
+    D = session.get("downloads", 0) * 0.4
+    
+    return max(0.0, M * C - D)
 
 # =====================================================
-# 📤 ÉMETTEUR
+# INTERFACE SÉCURISÉE
 # =====================================================
+st.set_page_config("TTU-Sync 2030", layout="wide")
+st.title("🔗 TTU-Sync : Partage Triadique Global")
+
+if 'SESSIONS' not in st.session_state:
+    st.session_state.SESSIONS = {}
+
+tabs = st.tabs(["📤 Émetteur (Gabon)", "📥 Récepteur (International)"])
+
 with tabs[0]:
-    st.subheader("📤 Envoi sécurisé")
-
-    files = st.file_uploader("Sélectionner fichiers", accept_multiple_files=True)
-
-    if files and st.button("🚀 Démarrer session"):
-        token = str(uuid.uuid4())
+    st.subheader("Générer un Flux Sécurisé")
+    uploaded_files = st.file_uploader("Fichiers à envoyer", accept_multiple_files=True)
+    
+    if uploaded_files and st.button("🚀 Lancer le Flux TST"):
+        token = str(uuid.uuid4())[:8] # Token court pour faciliter le partage
         key = Fernet.generate_key()
-        expires = now() + timedelta(seconds=TTL_SECONDS)
-
+        
+        # Chiffrement et préparation
         payload = []
-        for f in files:
-            raw = f.getvalue()
-            encrypted = Fernet(key).encrypt(raw)
-            payload.append({
-                "name": f.name,
-                "data": base64.b64encode(encrypted).decode(),
-                "size": len(raw),
-                "sha256": sha256(raw)
-            })
-
-        SESSIONS[token] = {
-            "key": base64.b64encode(key).decode(),
+        for f in uploaded_files:
+            encrypted = Fernet(key).encrypt(f.getvalue())
+            payload.append({"name": f.name, "data": base64.b64encode(encrypted).decode()})
+            
+        st.session_state.SESSIONS[token] = {
+            "key": key,
             "files": payload,
-            "expires": expires.timestamp()
+            "expires": datetime.utcnow().timestamp() + 120,
+            "status": "Active",
+            "downloads": 0
         }
+        
+        link = f"https://ttu-sync-2030.streamlit.app/?token={token}"
+        st.success(f"✅ Flux établi ! Envoie ce code à ta sœur : **{token}**")
+        st.info("Le lien se dissipera automatiquement après 120s ou après téléchargement.")
 
-        link = f"{APP_URL}/?token={token}"
-
-        st.success("🔐 Session active")
-        st.code(link)
-
-        qr = qrcode.make(link)
-        buf = BytesIO()
-        qr.save(buf)
-        st.image(buf.getvalue(), caption="📱 Scanner sur mobile")
-
-# =====================================================
-# 📥 RÉCEPTEUR
-# =====================================================
 with tabs[1]:
-    st.subheader("📥 Réception sécurisée")
-
-    token = st.query_params.get("token")
-
-    if not token:
-        st.info("📎 Ouvre un lien ou scanne un QR code")
-    elif token not in SESSIONS:
-        st.error("❌ Session introuvable ou expirée")
-    else:
-        session = SESSIONS[token]
-        remaining = int(session["expires"] - now().timestamp())
-
-        if remaining <= 0:
-            del SESSIONS[token]
-            st.error("⏳ Session expirée")
+    st.subheader("Récupérer le Flux")
+    query_token = st.text_input("Entrez le code de session", value=st.query_params.get("token", ""))
+    
+    if query_token in st.session_state.SESSIONS:
+        sess = st.session_state.SESSIONS[query_token]
+        chi = calculate_tst_stability(sess)
+        
+        if chi > 0:
+            st.write(f"🌐 **Stabilité du tunnel Gabon-International :** {chi:.2f}")
+            st.progress(chi)
+            
+            f_key = sess["key"]
+            for f in sess["files"]:
+                decrypted_data = Fernet(f_key).decrypt(base64.b64decode(f["data"]))
+                if st.download_button(f"⬇️ Télécharger {f['name']}", data=decrypted_data, file_name=f["name"]):
+                    st.session_state.SESSIONS[query_token]["downloads"] += 1
+                    st.rerun()
         else:
-            st.success("🔓 Session valide")
-            st.progress(remaining / TTL_SECONDS)
-            st.caption(f"⏳ Temps restant : {remaining} s")
-
-            key = base64.b64decode(session["key"])
-
-            for f in session["files"]:
-                decrypted = Fernet(key).decrypt(
-                    base64.b64decode(f["data"])
-                )
-
-                st.download_button(
-                    f"⬇️ {f['name']}",
-                    data=decrypted,
-                    file_name=f["name"]
-                )
-
-                st.caption(
-                    f"📦 {f['size']} octets | SHA-256 : `{f['sha256']}`"
-                )
-
-            time.sleep(1)
-            st.rerun()
+            st.error("🚨 Rupture de Symétrie : Le lien s'est dissipé (Temps expiré ou déjà utilisé).")

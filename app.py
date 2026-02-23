@@ -1,5 +1,3 @@
-
-```python
 import streamlit as st
 from cryptography.fernet import Fernet
 import datetime
@@ -9,201 +7,242 @@ import random
 import base64
 
 # =====================================================
-# CONFIGURATION & LOGO
+# CONFIG
 # =====================================================
-st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
+st.set_page_config(
+    page_title="GEN-Z GABON",
+    page_icon="🇬🇦",
+    layout="centered"
+)
 
-def get_base64_logo(file_path):
+# =====================================================
+# LOGO
+# =====================================================
+def get_logo(path):
     try:
-        with open(file_path, "rb") as f:
+        with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     except:
-        return ""
+        return None
 
-LOGO_B64 = get_base64_logo("logo.png")  # Placez un fichier logo.png dans le répertoire
+LOGO = get_logo("logo.png")
 
 # =====================================================
-# SYSTÈME DE GESTION (RAM UNIQUEMENT)
+# VAULT GLOBAL (RAM ONLY)
 # =====================================================
 @st.cache_resource
 def init_vault():
-    return {"FLUX": {}, "PRESENCE": {}}
+    return {
+        "FLUX": {},        # messages par tunnel
+        "PRESENCE": {},    # utilisateurs actifs
+        "SEEN_IDS": set()  # anti duplication
+    }
 
 VAULT = init_vault()
 
-def secure_id(key):
-    if not key:
+# =====================================================
+# UTILITAIRES
+# =====================================================
+def secure_id(secret: str):
+    if not secret:
         return None
-    h = f"{key}-{datetime.datetime.now().strftime('%Y-%m-%d-%H')}"
-    return hashlib.sha256(h.encode()).hexdigest()[:12].upper()
+    raw = f"{secret}-{datetime.datetime.now():%Y-%m-%d-%H}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:12].upper()
+
+def encrypt_payload(data: bytes):
+    key = Fernet.generate_key()
+    cipher = Fernet(key)
+
+    encrypted = cipher.encrypt(data)
+    l = len(encrypted)
+
+    return {
+        "f1": encrypted[:l//3],
+        "f2": encrypted[l//3:2*l//3],
+        "f3": encrypted[2*l//3:],
+        "k": key
+    }
+
+def decrypt_payload(p):
+    raw = p["f1"] + p["f2"] + p["f3"]
+    return Fernet(p["k"]).decrypt(raw)
 
 # =====================================================
-# DESIGN "FUTURISTIC GABON" (CSS)
+# STYLE
 # =====================================================
 st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600&display=swap');
-    
-    * { font-family: 'Outfit', sans-serif; }
-    .stApp { background: linear-gradient(180deg, #050505 0%, #0a1a12 100%); }
-    
-    /* Logo central */
-    .logo-container { text-align: center; padding: 20px; }
-    .logo-img { width: 120px; filter: drop-shadow(0 0 15px #00ffaa); }
+<style>
+.stApp {
+    background: linear-gradient(180deg,#050505,#081c15);
+    color:white;
+}
 
-    /* Glassmorphism Cards */
-    .post-card {
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(12px);
-        border-radius: 24px;
-        padding: 20px;
-        margin-bottom: 20px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        transition: 0.3s;
-    }
-    .post-card:hover { border: 1px solid #00ffaa; }
-
-    /* Status Presence */
-    .status-active { color: #00ffaa; font-size: 0.8em; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
-    
-    /* Header */
-    .app-title { 
-        background: linear-gradient(90deg, #00ffaa, #00d4ff);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 2.5em; font-weight: 800; text-align: center;
-    }
-    </style>
+.post {
+    background: rgba(255,255,255,0.05);
+    padding:18px;
+    border-radius:20px;
+    margin-bottom:15px;
+    border:1px solid rgba(255,255,255,0.1);
+}
+</style>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# INTERFACE PRINCIPALE
+# HEADER
 # =====================================================
-st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-if LOGO_B64:
-    st.markdown(f'<img src="data:image/png;base64,{LOGO_B64}" class="logo-img">', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+if LOGO:
+    st.image(f"data:image/png;base64,{LOGO}", width=120)
 
-st.markdown('<h1 class="app-title">GEN-Z GABON</h1>', unsafe_allow_html=True)
-st.caption("<center>L'espace où ta voix est souveraine. Éphémère. Indestructible.</center>", unsafe_allow_html=True)
+st.title("🇬🇦 GEN-Z GABON")
+st.caption("Tunnel social éphémère chiffré")
 
-# Connexion
-secret_key = st.text_input("🔑 CLÉ DU TUNNEL", type="password", placeholder="Entre ton code secret...").strip().upper()
-session_id = secure_id(secret_key)
+# =====================================================
+# LOGIN
+# =====================================================
+secret = st.text_input(
+    "🔑 CLÉ DU TUNNEL",
+    type="password"
+).strip().upper()
 
+session_id = secure_id(secret)
+
+# =====================================================
+# SESSION ACTIVE
+# =====================================================
 if session_id:
-    # Initialisation de la session utilisateur
-    if "user_token" not in st.session_state:
-        st.session_state.user_token = random.randint(1000, 9999)
-    
-    # Mise à jour de la présence
-    presence_key = f"{session_id}-{st.session_state.user_token}"
-    VAULT["PRESENCE"][presence_key] = time.time()
-    
-    # Nettoyage des présences expirées (plus de 15 secondes)
-    current_time = time.time()
-    expired_presence = [k for k, t in VAULT["PRESENCE"].items() if current_time - t > 15]
-    for k in expired_presence:
-        VAULT["PRESENCE"].pop(k, None)
-    
-    # Initialisation du flux pour cette session si nécessaire
+
+    # Token utilisateur unique
+    if "token" not in st.session_state:
+        st.session_state.token = random.randint(1000, 9999)
+
+    user_presence = f"{session_id}-{st.session_state.token}"
+
+    # présence
+    VAULT["PRESENCE"][user_presence] = time.time()
+
+    # nettoyage présence (15s)
+    now = time.time()
+    for k, t in list(VAULT["PRESENCE"].items()):
+        if now - t > 15:
+            VAULT["PRESENCE"].pop(k)
+
+    # init flux
     if session_id not in VAULT["FLUX"]:
         VAULT["FLUX"][session_id] = []
-    
-    # Nettoyage des messages de plus de 60 minutes
-    VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (current_time - p.get("time_obj", 0)) < 3600]
-    
-    # Vérification de la présence d'autres utilisateurs
-    active_peers = [k for k in VAULT["PRESENCE"].keys() if k.startswith(session_id) and k != presence_key]
-    if active_peers:
-        st.markdown('<p class="status-active">● SIGNAL DÉTECTÉ : TA SŒUR EST EN LIGNE</p>', unsafe_allow_html=True)
 
-    # --- FIL D'ACTUALITÉ ---
-    st.markdown("### 🌟 Fil d'Actualité")
-    feed_placeholder = st.empty()
-    
-    with feed_placeholder.container():
-        posts = VAULT["FLUX"][session_id]
-        if not posts:
-            st.info("Le tunnel est vide. Brise le silence.")
-        else:
-            # Afficher les messages du plus récent au plus ancien
-            for i, p in enumerate(reversed(posts)):
-                st.markdown('<div class="post-card">', unsafe_allow_html=True)
-                st.caption(f"🕒 {p['time']}")
-                try:
-                    # Reconstruction triadique
-                    raw = p["f1"] + p["f2"] + p["f3"]
-                    data = Fernet(p["k"]).decrypt(raw)
-                    
-                    if p["is_txt"]:
-                        st.markdown(f"**{data.decode()}**")
+    # nettoyage messages (>1h)
+    VAULT["FLUX"][session_id] = [
+        m for m in VAULT["FLUX"][session_id]
+        if now - m["time_obj"] < 3600
+    ]
+
+    # présence autres
+    peers = [
+        k for k in VAULT["PRESENCE"]
+        if k.startswith(session_id) and k != user_presence
+    ]
+
+    if peers:
+        st.success("● SIGNAL ACTIF — autre utilisateur connecté")
+
+    # =================================================
+    # FEED
+    # =================================================
+    st.subheader("🌟 Flux")
+
+    posts = list(reversed(VAULT["FLUX"][session_id]))
+
+    if not posts:
+        st.info("Tunnel vide.")
+    else:
+        for i, p in enumerate(posts):
+
+            msg_id = p["id"]
+            if msg_id in VAULT["SEEN_IDS"]:
+                continue
+
+            VAULT["SEEN_IDS"].add(msg_id)
+
+            st.markdown('<div class="post">', unsafe_allow_html=True)
+            st.caption(p["time"])
+
+            try:
+                data = decrypt_payload(p)
+
+                if p["is_txt"]:
+                    st.write(data.decode())
+                else:
+                    if "image" in p["type"]:
+                        st.image(data)
+                    elif "video" in p["type"]:
+                        st.video(data)
+                    elif "audio" in p["type"]:
+                        st.audio(data)
                     else:
-                        st.write(f"📁 {p['name']}")
-                        if "image" in p["type"]:
-                            st.image(data)
-                        elif "video" in p["type"]:
-                            st.video(data)
-                        elif "audio" in p["type"] or p["name"].lower().endswith(('.aac', '.m4a', '.wav', '.mp3')):
-                            st.audio(data)
-                        else:
-                            st.download_button("💾 Aspirer", data, file_name=p["name"], key=f"dl_{i}")
-                except Exception as e:
-                    st.error(f"Erreur de signal : {str(e)}")
-                st.markdown('</div>', unsafe_allow_html=True)
+                        st.download_button(
+                            "Télécharger",
+                            data,
+                            file_name=p["name"],
+                            key=f"dl{i}"
+                        )
+            except:
+                st.error("Erreur déchiffrement")
 
-    # --- BARRE D'ENVOI ---
-    st.markdown("---")
-    with st.container():
-        mode = st.radio("Publier :", ["💬 Texte", "📸 Média"], horizontal=True)
-        
-        content, name, m_type, is_txt = None, "", "", False
-        
-        if mode == "💬 Texte":
-            msg = st.chat_input("Exprime-toi...")
-            if msg:
-                content = msg.encode()
-                name = "txt"
-                m_type = "text"
-                is_txt = True
-        else:
-            f = st.file_uploader("Upload tout média (AAC, MP4, JPG...)", type=None)
-            if f:
-                content = f.getvalue()
-                name = f.name
-                m_type = f.type or "application/octet-stream"
-                is_txt = False
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        if content:
-            # Chiffrement triadique
-            key = Fernet.generate_key()
-            cipher = Fernet(key)
-            encrypted = cipher.encrypt(content)
-            l = len(encrypted)
-            fragment1 = encrypted[:l//3]
-            fragment2 = encrypted[l//3:2*l//3]
-            fragment3 = encrypted[2*l//3:]
-            
-            # Ajout au flux avec timestamp
-            VAULT["FLUX"][session_id].append({
-                "f1": fragment1,
-                "f2": fragment2,
-                "f3": fragment3,
-                "k": key,
-                "name": name,
-                "type": m_type,
-                "is_txt": is_txt,
-                "time": datetime.datetime.now().strftime("%H:%M"),
-                "time_obj": time.time()  # Pour le nettoyage
-            })
-            st.balloons()
-            st.rerun()
+    # =================================================
+    # ENVOI
+    # =================================================
+    st.divider()
 
-    # Rafraîchissement automatique toutes les 5 secondes pour voir les nouveaux messages
-    time.sleep(5)
-    st.rerun()
+    mode = st.radio("Publier", ["Texte", "Média"], horizontal=True)
+
+    content = None
+    name = ""
+    mtype = ""
+    is_txt = False
+
+    if mode == "Texte":
+        msg = st.chat_input("Message...")
+        if msg:
+            content = msg.encode()
+            is_txt = True
+            name = "txt"
+            mtype = "text"
+
+    else:
+        f = st.file_uploader("Upload média")
+        if f:
+            content = f.getvalue()
+            name = f.name
+            mtype = f.type or "application/octet-stream"
+
+    # =================================================
+    # POST
+    # =================================================
+    if content:
+
+        enc = encrypt_payload(content)
+
+        message_id = hashlib.sha256(
+            content + str(time.time()).encode()
+        ).hexdigest()
+
+        VAULT["FLUX"][session_id].append({
+            **enc,
+            "id": message_id,
+            "name": name,
+            "type": mtype,
+            "is_txt": is_txt,
+            "time": datetime.datetime.now().strftime("%H:%M"),
+            "time_obj": time.time()
+        })
+
+        st.balloons()
+        st.rerun()
+
+    # refresh doux (SAFE STREAMLIT)
+    st.experimental_rerun()
 
 else:
-    st.warning("Tunnel scellé. Entre ton secret pour voir le flux.")
-```
-
+    st.warning("Entre une clé pour ouvrir le tunnel.")

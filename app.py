@@ -4,11 +4,13 @@ import datetime
 import hashlib
 import time
 import random
+import numpy as np
+import matplotlib.pyplot as plt
 
 # =====================================================
 # CONFIGURATION & MÉMOIRE (RAM SÉCURISÉE)
 # =====================================================
-st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
+st.set_page_config(page_title="GEN-Z GABON • TST", page_icon="🇬🇦", layout="centered")
 
 @st.cache_resource
 def init_vault():
@@ -17,7 +19,6 @@ def init_vault():
         "FLUX": {},           # Messages par session_id
         "PRESENCE": {},       # Présence des utilisateurs
         "HISTORY": set(),     # IDs des messages déjà vus (pour éviter les doublons)
-        "SEEN_IDS": set(),    # (Optionnel) pour d'autres vérifications
     }
 
 VAULT = init_vault()
@@ -28,6 +29,28 @@ def secure_id(key):
         return None
     h = f"{key}-{datetime.datetime.now().strftime('%Y-%m-%d-%H')}"
     return hashlib.sha256(h.encode()).hexdigest()[:12].upper()
+
+# =====================================================
+# MODULE TST : Prédiction des zéros de Riemann
+# =====================================================
+def tst_predict_zeros(n_start, n_end):
+    """Génère les prédictions TST pour les rangs donnés."""
+    # Paramètres validés (issus des travaux précédents)
+    K = 2 * np.pi / 3
+    D = 142386.5947
+    n = np.arange(n_start, n_end + 1)
+    gamma = K * n / np.log(n) + D
+    return n, gamma
+
+def plot_tst_predictions(n, gamma):
+    """Crée un graphique des prédictions."""
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(n, gamma, 'b-', linewidth=1)
+    ax.set_xlabel('Rang n')
+    ax.set_ylabel('γ_n (prédiction TST)')
+    ax.set_title('Prédictions des zéros de Riemann par la TST')
+    ax.grid(alpha=0.3)
+    return fig
 
 # =====================================================
 # DESIGN DARK MODE (GLASSMORPHISM)
@@ -52,6 +75,7 @@ st.markdown("""
     
     .timer { color: #ff4b2b; font-size: 0.75em; font-weight: bold; margin-top: 8px; display: block; }
     .status-active { color: #00ffaa; font-size: 0.85em; text-align: center; font-weight: 600; margin-bottom: 15px; }
+    .tst-header { color: #ffaa00; font-size: 1.2em; font-weight: bold; margin-top: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -59,6 +83,7 @@ st.markdown("""
 # LOGIQUE D'ACCÈS
 # =====================================================
 st.markdown('<h1 style="text-align:center; color:#00ffaa; font-weight:900; letter-spacing:-1px;">GEN-Z GABON</h1>', unsafe_allow_html=True)
+st.markdown('<p style="text-align:center; color:#888;">♾️ Communication triadique • TST intégrée</p>', unsafe_allow_html=True)
 
 with st.expander("🔑 CLÉ DU TUNNEL", expanded=True):
     secret_key = st.text_input("SECRET", type="password", label_visibility="collapsed").strip().upper()
@@ -139,7 +164,7 @@ if session_id:
     # =====================================================
     st.markdown("---")
     with st.container():
-        mode = st.tabs(["💬 Texte", "📸 Photo", "🎙️ Audio", "📂 Fichier"])
+        mode = st.tabs(["💬 Texte", "📸 Photo", "🎙️ Audio", "📂 Fichier", "🎥 Vidéo"])
         
         raw_to_send = None
         f_name = ""
@@ -175,12 +200,19 @@ if session_id:
                 f_name = upl.name
                 m_type = upl.type or "application/octet-stream"
 
+        with mode[4]:
+            vid = st.file_uploader("Choisir une vidéo", type=["mp4", "mov", "avi", "mkv"], label_visibility="collapsed")
+            if vid:
+                raw_to_send = vid.getvalue()
+                f_name = vid.name
+                m_type = vid.type or "video/mp4"
+
         # Envoi du message si des données sont présentes
         if raw_to_send:
             # Génération d'un identifiant unique pour éviter les doublons
             msg_id = hashlib.md5(raw_to_send + str(round(time.time(), 1)).encode()).hexdigest()
             
-            # Vérification des doublons
+            # Vérification des doublons via HISTORY (et non SEEN_IDS)
             if msg_id not in VAULT["HISTORY"]:
                 # Chiffrement triadique
                 key = Fernet.generate_key()
@@ -211,7 +243,39 @@ if session_id:
                 st.warning("Ce message a déjà été envoyé récemment.")
 
     # =====================================================
-    # 3. CONTRÔLE DE DESTRUCTION
+    # 3. MODULE TST : PRÉDICTION DES ZÉROS
+    # =====================================================
+    st.markdown("---")
+    st.markdown('<div class="tst-header">🌀 Théorie Spectrale Triadique</div>', unsafe_allow_html=True)
+    with st.expander("📈 Prédire les zéros de Riemann avec la TST", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            n_start = st.number_input("Rang de début", min_value=1, value=1, step=1)
+        with col2:
+            n_end = st.number_input("Rang de fin", min_value=n_start, value=min(n_start+100, 1000000), step=1)
+        
+        if st.button("🚀 Générer les prédictions"):
+            with st.spinner("Calcul en cours..."):
+                n_vals, gamma_vals = tst_predict_zeros(int(n_start), int(n_end))
+                st.success(f"Prédictions générées pour n = {n_start} à {n_end}")
+                
+                # Affichage des 10 premières valeurs
+                st.subheader("Aperçu des premières valeurs")
+                preview = pd.DataFrame({"Rang": n_vals[:10], "γ_TST": gamma_vals[:10]})
+                st.dataframe(preview)
+                
+                # Graphique
+                fig = plot_tst_predictions(n_vals, gamma_vals)
+                st.pyplot(fig)
+                
+                # Téléchargement CSV
+                import pandas as pd
+                df = pd.DataFrame({"Rang": n_vals, "γ_TST": gamma_vals})
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Télécharger les prédictions (CSV)", csv, file_name="tst_predictions.csv")
+
+    # =====================================================
+    # 4. CONTRÔLE DE DESTRUCTION
     # =====================================================
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🧨 DISPERSER TOUT LE TUNNEL", use_container_width=True):
@@ -219,11 +283,9 @@ if session_id:
         st.rerun()
 
     # =====================================================
-    # 4. RAFRAÎCHISSEMENT AUTOMATIQUE (optionnel)
+    # 5. RAFRAÎCHISSEMENT AUTOMATIQUE (allégé)
     # =====================================================
-    # Pour éviter de surcharger le serveur, on utilise un rafraîchissement toutes les 10 secondes
-    # mais seulement si l'utilisateur est actif. On peut aussi utiliser st.empty() et des mises à jour partielles.
-    # Ici, on utilise un placeholder pour éviter un rerun inconditionnel.
+    # On utilise un placeholder pour éviter les rerun intempestifs
     placeholder = st.empty()
     time.sleep(10)
     st.rerun()

@@ -6,32 +6,31 @@ import time
 import random
 
 # =====================================================
-# CLASSE CŒUR : TST ENGINE (GESTION RAM)
+# CLASSE TST : GESTION DES SIGNAUX ET RÉACTIONS
 # =====================================================
 class TSTEngine:
     def __init__(self):
-        if "tst_vault" not in st.session_state:
-            st.session_state.tst_vault = {
-                "FLUX": {}, "HISTORY": set(), "PRESENCE": {}, "COMMENTS": {}
+        if "vault" not in st.session_state:
+            st.session_state.vault = {
+                "FLUX": {}, "HISTORY": set(), "REACTIONS": {}
             }
-        self.db = st.session_state.tst_vault
+        self.db = st.session_state.vault
 
-    def derive_session_id(self, key):
+    def derive_id(self, key):
         if not key: return None
         grain = datetime.datetime.now().strftime("%Y-%m-%d-%H")
         return hashlib.sha256(f"{key}-{grain}".encode()).hexdigest()[:12].upper()
 
-    def broadcast(self, sid, content, fname, mtype, is_txt):
-        # Hash strict pour bloquer les répétitions infinies
+    def send_signal(self, sid, content, fname, mtype, is_txt):
         sig_hash = hashlib.md5(content + fname.encode()).hexdigest()
         if sig_hash not in self.db["HISTORY"]:
             k = Fernet.generate_key()
             enc = Fernet(k).encrypt(content)
-            msg_id = f"tst_{int(time.time()*1000)}"
+            msg_id = f"sig_{int(time.time()*1000)}"
             payload = {
                 "id": msg_id, "k": k, "ts": time.time(), "is_txt": is_txt,
                 "name": fname, "type": mtype, "hash": sig_hash,
-                "fragments": [enc[:len(enc)//3], enc[len(enc)//3:2*len(enc)//3], enc[2*len(enc)//3:]]
+                "frags": [enc[:len(enc)//3], enc[len(enc)//3:2*len(enc)//3], enc[2*len(enc)//3:]]
             }
             if sid not in self.db["FLUX"]: self.db["FLUX"][sid] = []
             self.db["FLUX"][sid].append(payload)
@@ -39,120 +38,150 @@ class TSTEngine:
             return True
         return False
 
+    def add_reaction(self, msg_id, emoji):
+        if msg_id not in self.db["REACTIONS"]:
+            self.db["REACTIONS"][msg_id] = []
+        self.db["REACTIONS"][msg_id].append(emoji)
+
 # =====================================================
-# INTERFACE SANS SIDEBAR ET SANS RAMAGES
+# CLASSE UI : DESIGN ET ERGONOMIE PHOTO
+# =====================================================
+class KongossaUI:
+    @staticmethod
+    def apply_custom_css():
+        st.markdown("""
+            <style>
+            @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;700;900&display=swap');
+            * { font-family: 'Outfit', sans-serif; }
+            .stApp { background: #050505; color: white; }
+            
+            /* Bulles de tchat avec réactions superposées */
+            .signal-card {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 25px 25px 25px 5px;
+                padding: 20px; margin-bottom: 25px;
+                border: 1px solid rgba(0, 255, 170, 0.15);
+                position: relative;
+            }
+            .reaction-pill {
+                position: absolute; bottom: -12px; left: 20px;
+                background: #1a1a1a; border: 1px solid #00ffaa;
+                border-radius: 15px; padding: 2px 8px; font-size: 0.9em;
+                display: flex; gap: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+            }
+            .tst-timer { color: #ff4b4b; font-size: 0.75em; font-weight: bold; }
+            
+            /* Style Caméra Miroir */
+            [data-testid="stCameraInput"] > div {
+                transform: scaleX(-1); /* Effet miroir pour l'utilisateur */
+                border: 3px solid #00ffaa !important; border-radius: 20px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+# =====================================================
+# LOGIQUE PRINCIPALE
 # =====================================================
 tst = TSTEngine()
+ui = KongossaUI()
+ui.apply_custom_css()
 
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;700;900&display=swap');
-    * { font-family: 'Outfit', sans-serif; }
-    .stApp { background: #050505; color: white; }
-    .hero-card {
-        background: rgba(255, 255, 255, 0.03); border: 1px solid #00FFAA33;
-        border-radius: 25px; padding: 25px; text-align: center;
-    }
-    .chat-bubble {
-        background: rgba(255, 255, 255, 0.07); border-radius: 20px;
-        padding: 15px; margin-bottom: 15px; border-left: 5px solid #00FFAA;
-    }
-    .reaction-btn { border-radius: 50% !important; padding: 5px !important; }
-    </style>
-""", unsafe_allow_html=True)
+if "auth" not in st.session_state: st.session_state.auth = False
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-st.markdown('<h1 style="text-align:center; color:#00FFAA;">🇬🇦 GEN Z GABON</h1>', unsafe_allow_html=True)
-st.markdown('<h3 style="text-align:center; color:#00D4FF;">FREE-KONGOSSA</h3>', unsafe_allow_html=True)
+# --- HEADER ---
+st.markdown('<p style="text-align:center; font-size:45px;">🇬🇦</p>', unsafe_allow_html=True)
+st.markdown('<h1 style="text-align:center; background: linear-gradient(90deg, #00FFAA, #00D4FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight:900;">GEN Z GABON</h1>', unsafe_allow_html=True)
+st.markdown('<p style="text-align:center; font-weight:bold; letter-spacing:2px; margin-top:-20px;">FREE-KONGOSSA</p>', unsafe_allow_html=True)
 
 # --- ACCUEIL ---
-if not st.session_state.authenticated:
-    st.markdown("""
-    <div class="hero-card">
-        <h3>🚨 GUIDE DU KONGOSSA SOUVERAIN</h3>
-        <p>1. Entre ta clé. 2. Capture ton signal. 3. Le signal s'évapore en 1h.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    secret = st.text_input("🔑 CLÉ SECRÈTE", type="password").strip().upper()
-    if st.button("ACTIVER LE TUNNEL", use_container_width=True):
-        if secret:
-            st.session_state.sid = tst.derive_session_id(secret)
-            st.session_state.authenticated = True
-            st.rerun()
+if not st.session_state.auth:
+    with st.container():
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        key = st.text_input("🔑 CLÉ DU TUNNEL", type="password", placeholder="Entre ton secret...").strip().upper()
+        if st.button("ACTIVER LE SIGNAL", use_container_width=True):
+            if key:
+                st.session_state.sid = tst.derive_id(key)
+                st.session_state.auth = True
+                st.rerun()
 
-# --- INTERFACE DE TCHAT ---
+# --- ESPACE KONGOSSA ---
 else:
     sid = st.session_state.sid
     
-    # Nettoyage automatique TST
+    # Auto-nettoyage (1h)
     tst.db["FLUX"][sid] = [p for p in tst.db["FLUX"].get(sid, []) if (time.time() - p["ts"]) < 3600]
 
-    # Flux de messages
+    # Affichage des Signaux
     for p in tst.db["FLUX"].get(sid, []):
         with st.container():
-            st.markdown('<div class="chat-bubble">', unsafe_allow_html=True)
+            st.markdown('<div class="signal-card">', unsafe_allow_html=True)
             try:
-                raw = Fernet(p["k"]).decrypt(p["fragments"][0] + p["fragments"][1] + p["fragments"][2])
-                if p["is_txt"]: st.markdown(f"**{raw.decode()}**")
+                # Décryptage TST
+                f = Fernet(p["k"])
+                raw = f.decrypt(p["frags"][0] + p["frags"][1] + p["frags"][2])
+                
+                rem = int(3600 - (time.time() - p["ts"]))
+                st.markdown(f'<span class="tst-timer">⌛ {rem//60} MIN AVANT ÉVAPORATION</span>', unsafe_allow_html=True)
+                
+                if p["is_txt"]: st.markdown(f"### {raw.decode()}")
                 else:
-                    if "image" in p["type"]: st.image(raw)
+                    if "image" in p["type"]: st.image(raw, use_container_width=True)
                     elif "video" in p["type"]: st.video(raw)
                     elif "audio" in p["type"]: st.audio(raw)
-                
-                # Réactions & Commentaires simplifiés
-                cols = st.columns([0.1, 0.1, 0.1, 0.7])
-                if cols[0].button("❤️", key=f"h_{p['id']}"): tst.db.setdefault("COMMENTS", {}).setdefault(p['id'], []).append("❤️")
-                if cols[1].button("🔥", key=f"f_{p['id']}"): tst.db.setdefault("COMMENTS", {}).setdefault(p['id'], []).append("🔥")
-                
-                if p['id'] in tst.db.get("COMMENTS", {}):
-                    st.caption(" | ".join(tst.db["COMMENTS"][p['id']]))
-            except: st.error("Fragment perdu")
+
+                # --- RÉACTIONS SUPERPOSÉES ---
+                reactions = tst.db["REACTIONS"].get(p['id'], [])
+                if reactions:
+                    react_str = "".join(reactions[:5]) # Affiche les 5 premières
+                    if len(reactions) > 5: react_str += f" +{len(reactions)-5}"
+                    st.markdown(f'<div class="reaction-pill">{react_str}</div>', unsafe_allow_html=True)
+
+                # Menu de réaction (simulant l'appui long)
+                with st.expander("Réagir au signal"):
+                    r_cols = st.columns(5)
+                    for idx, emo in enumerate(["❤️", "😂", "🔥", "✊", "😮"]):
+                        if r_cols[idx].button(emo, key=f"re_{idx}_{p['id']}"):
+                            tst.add_reaction(p['id'], emo)
+                            st.rerun()
+            except: st.error("Rupture de signal")
             st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
     
-    # --- ZONE DE SIGNAL UNIQUE (POUR ÉVITER LE RAMAGE) ---
+    # --- ZONE D'ENVOI SÉLECTIVE (ANTI-RAM) ---
     st.subheader("➕ NOUVEAU SIGNAL")
-    
-    # Le secret pour ne pas faire ramer : un selectbox au lieu de tabs pour les médias lourds
-    option = st.selectbox("Type de signal", ["💬 Message", "📸 Photo (Instant)", "🎥 Vidéo (Upload)", "🎙️ Vocal"], label_visibility="collapsed")
+    choice = st.selectbox("Choisis ton mode", ["💬 Tchat", "📸 Photo (Miroir)", "🎥 Vidéo", "🎙️ Vocal"], label_visibility="collapsed")
 
-    if option == "💬 Message":
-        msg = st.chat_input("Raconte...")
-        if msg:
-            tst.broadcast(sid, msg.encode(), "txt", "text", True)
+    if choice == "💬 Tchat":
+        txt = st.chat_input("Écris ici...")
+        if txt: 
+            tst.send_signal(sid, txt.encode(), "txt", "text", True)
             st.rerun()
 
-    elif option == "📸 Photo (Instant)":
-        # On n'affiche le camera_input QUE si l'option est sélectionnée
-        cam = st.camera_input("Sourire pour le Kongossa")
-        if cam:
-            tst.broadcast(sid, cam.getvalue(), "img.jpg", "image/jpeg", False)
-            st.success("Photo capturée ! Change d'option pour envoyer autre chose.")
-            # On force un petit délai pour que l'utilisateur voit le succès
+    elif choice == "📸 Photo (Miroir)":
+        st.info("💡 L'effet miroir est activé pour t'aider à mieux cadrer ton Kongossa.")
+        photo = st.camera_input("Prendre la photo")
+        if photo:
+            tst.send_signal(sid, photo.getvalue(), "shot.jpg", "image/jpeg", False)
+            st.success("Signal photo envoyé !")
             time.sleep(1)
             st.rerun()
 
-    elif option == "🎥 Vidéo (Upload)":
-        vid = st.file_uploader("Charge ta vidéo souveraine", type=["mp4", "mov", "avi"])
-        if vid:
-            if st.button("🚀 DIFFUSER LA VIDÉO"):
-                tst.broadcast(sid, vid.getvalue(), vid.name, vid.type, False)
-                st.rerun()
+    elif choice == "🎥 Vidéo":
+        vid = st.file_uploader("Enregistre et charge ta vidéo", type=["mp4", "mov"])
+        if vid and st.button("🚀 DIFFUSER LA VIDÉO"):
+            tst.send_signal(sid, vid.getvalue(), vid.name, vid.type, False)
+            st.rerun()
 
-    elif option == "🎙️ Vocal":
-        vox = st.audio_input("Enregistre ton message")
+    elif choice == "🎙️ Vocal":
+        vox = st.audio_input("Enregistre ton vocal")
         if vox:
-            # On vérifie le hash avant d'envoyer pour éviter la boucle infinie
-            if tst.broadcast(sid, vox.getvalue(), "vocal.wav", "audio/wav", False):
+            if tst.send_signal(sid, vox.getvalue(), "vocal.wav", "audio/wav", False):
                 st.rerun()
 
     if st.button("🧨 FERMER LE TUNNEL"):
-        st.session_state.authenticated = False
+        st.session_state.auth = False
         st.rerun()
 
-    time.sleep(10)
+    time.sleep(8)
     st.rerun()

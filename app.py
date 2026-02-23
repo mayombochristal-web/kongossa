@@ -2,179 +2,173 @@ import streamlit as st
 from cryptography.fernet import Fernet
 import datetime
 import hashlib
+import time
 import random
 
 # =====================================================
-# GESTION DES FLUX SOUVERAINS (RAM UNIQUEMENT)
+# CŒUR DU SYSTÈME : LOGIQUE TST (THERMODYNAMIQUE)
 # =====================================================
 @st.cache_resource
-def initialiser_systeme():
-    return {"FLUX": {}}
+def init_tst_vault():
+    # Initialisation du coffre-fort en RAM
+    return {"FLUX": {}, "PRESENCE": {}, "HISTORY": set()}
 
-SYSTEME = initialiser_systeme()
+VAULT = init_tst_vault()
 
-def generer_id(code_base):
-    if not code_base: return None
-    # ID qui change toutes les heures
+def calculate_tst_entropy(key):
+    if not key: return None
+    # Cycle de Derime : Rotation horaire de la clé
     grain = datetime.datetime.now().strftime("%Y-%m-%d-%H")
-    return hashlib.sha256(f"{code_base}-{grain}".encode()).hexdigest()[:10].upper()
-
-# --- Générateur de Leurres (Système anti-surveillance) ---
-def injecter_leurres():
-    sujets_leures = ["Recette_Gateau.pdf", "Paysage_Afrique.jpg", "Audio_Conf.mp3", "Video_Dansante.mp4"]
-    for i in range(5): # 5 faux flux par heure pour brouiller les pistes
-        faux_id = generer_id(f"FAKE_KEY_{i}_{datetime.datetime.now().hour}")
-        if faux_id not in SYSTEME["FLUX"]:
-            SYSTEME["FLUX"][faux_id] = [{
-                "is_decoy": True, # Marque un post comme un leurre
-                "name": random.choice(sujets_leures),
-                "type": "text/plain", # Type générique pour ne pas consommer trop de RAM pour les leurres
-                "time": f"{random.randint(0,23)}:{random.randint(10,59)}"
-            }]
-
-injecter_leurres() # Active les leurres au démarrage
+    return hashlib.sha256(f"{key}-{grain}".encode()).hexdigest()[:12].upper()
 
 # =====================================================
-# DESIGN "INSTAGRAM DU FUTUR"
+# DESIGN "GLASS-GABON" & INTERFACE LUDIQUE
 # =====================================================
-st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="wide")
+st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
 
 st.markdown("""
     <style>
-    /* Général */
-    .stApp { background: #0E1117; color: white; }
-    h1, h2, h3, h4, h5, h6 { color: #00FFAA; }
-    p { font-size: 1.1em; }
-
-    /* Entrée de la Clé */
-    .stTextInput label { font-size: 1.2em; color: #FF4B4B; }
-    .stTextInput input { border-radius: 10px; border: 1px solid #333; padding: 10px; }
-
-    /* Boutons */
-    .stButton>button { 
-        width: 100%; border-radius: 10px; height: 3em; 
-        background: linear-gradient(90deg, #FF4B4B, #FF8C00); /* Dégradé stylé */
-        color: white; font-weight: bold; border: none;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600;900&display=swap');
+    * { font-family: 'Outfit', sans-serif; }
+    .stApp { background: linear-gradient(180deg, #050505 0%, #0a1a12 100%); }
+    
+    /* Bulles de conversation Style WhatsApp/Insta */
+    .message-container { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+    
+    .bubble {
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(12px);
+        border-radius: 20px 20px 20px 5px;
+        padding: 15px;
+        border: 1px solid rgba(0, 255, 170, 0.2);
+        max-width: 85%;
+        align-self: flex-start;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }
-    .stDownloadButton button { background: #007BFF; } /* Couleur bleue pour télécharger */
 
-    /* "Stories" éphémères (les bulles) */
-    .story-card {
-        background: #1C1C24; /* Fond sombre */
-        border-radius: 15px; margin-bottom: 15px; padding: 20px;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.4);
-        border-left: 5px solid #00FFAA; /* Bordure colorée pour le "vrai" flux */
+    .tst-timer {
+        font-size: 0.7em; color: #00ffaa; font-weight: bold;
+        text-transform: uppercase; margin-top: 8px; display: block;
     }
-    .story-card.decoy { border-left: 5px solid #555; opacity: 0.6; } /* Leurre plus discret */
-    .timestamp { font-size: 0.8em; color: #808495; margin-bottom: 10px; display: block; }
-    .stImage, .stVideo, .stAudio { border-radius: 10px; margin-top: 10px; }
+
+    /* Logo et Header */
+    .app-title {
+        text-align: center; font-weight: 900; font-size: 2.8em;
+        background: linear-gradient(90deg, #00ffaa, #00d4ff);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    
+    /* Emojis Reactions */
+    .react-bar { font-size: 1.2em; cursor: pointer; margin-top: 5px; opacity: 0.7; }
+    .react-bar:hover { opacity: 1; }
     </style>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# APPLICATION PRINCIPALE
+# EN-TÊTE ET ACCÈS
 # =====================================================
+st.markdown('<h1 class="app-title">GEN-Z GABON</h1>', unsafe_allow_html=True)
+st.caption("<center>⚡ Propulsé par le modèle thermodynamique TST</center>", unsafe_allow_html=True)
 
-st.title("✊ FREE-KONGOSSA")
-st.markdown("### *Ton espace privé, éphémère et souverain*")
+# Ici, on pourrait mettre le logo (image locale ou URL)
+# st.image("logo_genz.png", width=100) 
 
-# --- ZONE D'ACCÈS ET CLÉ SECRÈTE ---
-st.subheader("🔑 Ouvre ton Tunnel")
-code_racine = st.text_input("Entre ta clé secrète ici", type="password", placeholder="Ex: MAMBOUNDOU, le nom de notre rue...").strip().upper()
+with st.expander("🔑 CLÉ DU TUNNEL TST", expanded=True):
+    user_key = st.text_input("SECRET", type="password", label_visibility="collapsed").strip().upper()
 
-id_session = generer_id(code_racine)
+session_id = calculate_tst_entropy(user_key)
 
-if id_session:
-    if id_session not in SYSTEME["FLUX"]: SYSTEME["FLUX"][id_session] = []
+if session_id:
+    # Présence temps réel
+    if "u_token" not in st.session_state: st.session_state.u_token = random.randint(100, 999)
+    VAULT["PRESENCE"][f"{session_id}-{st.session_state.u_token}"] = time.time()
+    
+    if session_id not in VAULT["FLUX"]: VAULT["FLUX"][session_id] = []
 
-    st.success(f"Tunnel Actif : {id_session} (Valide jusqu'à la prochaine heure)")
+    # Détection de signal
+    active_peers = [k for k, v in VAULT["PRESENCE"].items() if k.startswith(session_id) and (time.time() - v) < 20]
+    if len(active_peers) > 1:
+        st.success(f"🟢 SIGNAL ÉTABLI : {len(active_peers)} UNITÉS TST EN LIGNE")
+
+    # =====================================================
+    # FIL D'ACTUALITÉ (LES PLUS RÉCENTS EN BAS)
+    # =====================================================
+    # Nettoyage TST : On supprime ce qui a plus de 3600 secondes
+    VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["ts"]) < 3600]
+
     st.markdown("---")
-
-    # --- FIL D'ACTUALITÉ / "STORIES" ---
-    st.subheader("🌟 Tes Stories Éphémères")
-    posts_actifs = [p for p in SYSTEME["FLUX"][id_session] if not p.get("is_decoy", False)]
-
-    if not posts_actifs: # Affiche seulement les vrais posts
-        st.info("👻 Le tunnel est ouvert ! Partage ta première histoire...")
-    else:
-        # Affichage des posts du plus récent au plus ancien
-        for i, p in enumerate(reversed(posts_actifs)):
-            with st.container():
-                st.markdown(f'<div class="story-card">', unsafe_allow_html=True)
-                st.markdown(f'<span class="timestamp">{p["time"]}</span>', unsafe_allow_html=True)
-                
-                try:
-                    # Fusion des 3 fragments et déchiffrement
-                    complet = p["frag"][0] + p["frag"][1] + p["frag"][2]
-                    data = Fernet(p["key"]).decrypt(complet)
-                    
-                    if p["text"]:
-                        st.write(data.decode())
-                    else:
-                        st.write(f"📁 **{p['name']}**")
-                        if "image" in p["type"]: st.image(data, use_column_width=True)
-                        elif "video" in p["type"]: st.video(data)
-                        elif "audio" in p["type"]: st.audio(data)
-                        st.download_button(f"📥 Télécharger {p['name']}", data, file_name=p["name"], key=f"dl_{i}")
-                except Exception as e:
-                    st.error(f"Rupture de signal : impossible de lire ce post. ({e})")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
+    chat_space = st.container()
     
-    st.markdown("---")
-
-    # --- ZONE D'ENVOI "CRÉER UNE STORY" ---
-    st.subheader("➕ Crée ta Story")
-    
-    col_input, col_button = st.columns([0.7, 0.3])
-    
-    with col_input:
-        type_media = st.radio("Quel type de story ?", ["💬 Message", "📸 Photo/Vidéo", "🎙️ Audio", "📄 Document"], horizontal=True)
-        
-        contenu = None
-        nom_f, mime_f, is_text = "", "", False
-
-        if type_media == "💬 Message":
-            msg = st.text_area("Ton message...", placeholder="Partage tes pensées secrètes...", height=100)
-            if msg: contenu, nom_f, mime_f, is_text = msg.encode(), "Msg.txt", "text/plain", True
+    with chat_space:
+        posts = VAULT["FLUX"][session_id]
+        if not posts:
+            st.info("👻 Aucune donnée thermodynamique dans le tunnel.")
         else:
-            # Type = None pour accepter TOUS les formats (y compris AAC)
-            f = st.file_uploader("Charge ton média", type=None) 
-            if f: contenu, nom_f, mime_f, is_text = f.getvalue(), f.name, f.type, False
+            for i, p in enumerate(posts):
+                st.markdown(f'<div class="bubble">', unsafe_allow_html=True)
+                try:
+                    # Déchiffrement Triadique
+                    raw = Fernet(p["k"]).decrypt(p["f1"] + p["f2"] + p["f3"])
+                    
+                    if p["is_txt"]:
+                        st.markdown(f"**{raw.decode()}**")
+                    else:
+                        st.caption(f"📎 {p['name']}")
+                        if "image" in p["type"]: st.image(raw)
+                        elif "video" in p["type"]: st.video(raw)
+                        elif "audio" in p["type"]: st.audio(raw)
+                        st.download_button("📥", raw, file_name=p["name"], key=f"dl_{i}_{p['ts']}")
+                    
+                    # Réactions style WhatsApp
+                    st.markdown('<div class="react-bar">❤️ 😂 🔥 🙌 😮</div>', unsafe_allow_html=True)
+                except:
+                    st.error("Signal corrompu")
+                
+                # Timer TST
+                rem = int(3600 - (time.time() - p["ts"]))
+                st.markdown(f'<span class="tst-timer">⏳ ÉVAPORATION DANS {rem // 60} MIN</span>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_button:
-        # Bouton d'envoi principal
-        st.write("") # Espace pour aligner le bouton
-        st.write("") 
-        if contenu and st.button("🚀 PUBLIER MA STORY"):
-            cle = Fernet.generate_key()
-            chiffre = Fernet(cle).encrypt(contenu)
-            t = len(chiffre)
-            
-            SYSTEME["FLUX"][id_session].append({
-                "frag": (chiffre[:t//3], chiffre[t//3:2*t//3], chiffre[2*t//3:]),
-                "key": cle, "name": nom_f, "type": mime_f, "text": is_text,
-                "time": datetime.datetime.now().strftime("%H:%M")
-            })
-            st.success("Story publiée et sécurisée !")
-            st.balloons() # Célébration ludique
-            st.rerun() # Rafraîchit le fil d'actualité
+    # =====================================================
+    # ZONE DE SAISIE (BAS DE PAGE)
+    # =====================================================
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    with st.container():
+        mode = st.tabs(["💬 Texte", "📸 Caméra", "🎙️ Micro", "📂"])
+        
+        data, fname, mtype, istxt = None, "", "", False
 
-        # Bouton de destruction des données
-        st.write("")
-        if st.button("🧨 Vider le Tunnel"):
-            SYSTEME["FLUX"][id_session] = []
-            st.warning("Le tunnel a été vidé. Toutes les stories ont disparu !")
-            st.rerun()
+        with mode[0]:
+            msg = st.chat_input("Partage ton Kongossa...")
+            if msg: data, fname, mtype, istxt = msg.encode(), "txt", "text", True
+        with mode[1]:
+            cam = st.camera_input("Capture instantanée")
+            if cam: data, fname, mtype = cam.getvalue(), "img.jpg", "image/jpeg"
+        with mode[2]:
+            mic = st.audio_input("Message vocal")
+            if mic: data, fname, mtype = mic.getvalue(), "audio.wav", "audio/wav"
+        with mode[3]:
+            upl = st.file_uploader("Document", label_visibility="collapsed")
+            if upl: data, fname, mtype = upl.getvalue(), upl.name, upl.type
+
+        if data:
+            # Hash anti-doublon
+            msg_id = hashlib.md5(data + str(round(time.time(), 1)).encode()).hexdigest()
+            if msg_id not in VAULT["HISTORY"]:
+                k = Fernet.generate_key()
+                box = Fernet(k).encrypt(data)
+                l = len(box)
+                VAULT["FLUX"][session_id].append({
+                    "f1": box[:l//3], "f2": box[l//3:2*l//3], "f3": box[2*l//3:],
+                    "k": k, "name": fname, "type": mtype, "is_txt": istxt,
+                    "ts": time.time(), "id": msg_id
+                })
+                VAULT["HISTORY"].add(msg_id)
+                st.rerun()
+
+    # Rafraîchissement automatique stable
+    time.sleep(10)
+    st.rerun()
 
 else:
-    st.info("💡 Saisis la clé secrète partagée avec ton proche pour débloquer les stories éphémères et sécurisées.")
-    st.markdown("---")
-    st.write("""
-        ### Pourquoi FREE-KONGOSSA ?
-        - **Souveraineté** : Tes données restent invisibles, jamais stockées sur un disque.
-        - **Éphémère** : Tout disparaît automatiquement après chaque heure.
-        - **Incraquable** : Ton secret est fragmenté en 3, chiffré et noyé parmi des leurres numériques.
-        - **Éthique** : Zéro traçage, zéro publicité. C'est TA communication.
-    """)
+    st.info("💡 Connectez-vous au tunnel TST pour échanger en toute liberté.")

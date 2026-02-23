@@ -5,7 +5,7 @@ import hashlib
 import random
 
 # =====================================================
-# ARCHITECTURE AVEC SYSTÈME DE LEURES
+# ARCHITECTURE MULTI-FLUX & LEURES
 # =====================================================
 @st.cache_resource
 def initialiser_systeme_triadique():
@@ -18,76 +18,114 @@ def generer_identifiant_temporel(code_base):
     grain_de_sel = datetime.datetime.now().strftime("%Y-%m-%d-%H")
     return hashlib.sha256(f"{code_base}-{grain_de_sel}".encode()).hexdigest()[:12].upper()
 
-# --- GÉNÉRATEUR DE PERSONNAGES FICTIFS (Leures) ---
 def generer_leures_horaires():
-    """Crée des discussions fantômes pour noyer les vrais flux."""
-    prenoms = ["Moussa", "Fatou", "Yannick", "Leila", "Marc", "Aminata", "Christian", "Béatrice"]
-    sujets = ["Le prix du manioc", "Le match de demain", "Recette de cuisine", "Rapport de stage", "Photos de vacances"]
-    
-    # On génère 5 faux IDs de session par heure
+    """Génère du bruit numérique pour saturer le serveur de faux IDs."""
+    sujets = ["Rapport_Vente.pdf", "Vacances.jpg", "Note_Vocale.mp3", "Film_Famille.mp4"]
     for i in range(5):
-        faux_secret = f"FAKE_KEY_{i}_{datetime.datetime.now().hour}"
-        faux_id = generer_identifiant_temporel(faux_secret)
-        
-        if faux_id not in SYSTEME["FLUX"] or not SYSTEME["FLUX"][faux_id]:
-            SYSTEME["FLUX"][faux_id] = [{
-                "fragments": (b"x", b"y", b"z"),
-                "key": Fernet.generate_key(),
-                "name": f"{random.choice(sujets)}.pdf",
-                "type": "application/pdf",
-                "time": f"{random.randint(0,23)}:{random.randint(10,59)}",
-                "is_text": False,
-                "is_decoy": True # Marqueur interne
-            }]
+        faux_id = generer_identifiant_temporel(f"FAKE_KEY_{i}_{datetime.datetime.now().hour}")
+        if faux_id not in SYSTEME["FLUX"]:
+            SYSTEME["FLUX"][faux_id] = [{"is_decoy": True, "name": random.choice(sujets), "time": "14:02"}]
 
-# On lance la génération de leures à chaque rafraîchissement
 generer_leures_horaires()
 
 # =====================================================
-# INTERFACE SOUVERAINE
+# INTERFACE RÉSEAU SOCIAL
 # =====================================================
-st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊")
+st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="centered")
 
-# CSS pour différencier les bulles
 st.markdown("""
     <style>
-    .message-bubble { padding: 15px; border-radius: 15px; background-color: #1E1E26; margin-bottom: 10px; border-left: 5px solid #00FFAA; }
-    .decoy-bubble { border-left: 5px solid #555; opacity: 0.7; }
+    .stApp { background-color: #0E1117; }
+    .message-bubble { 
+        padding: 20px; border-radius: 20px; background-color: #262730; 
+        margin-bottom: 15px; border-left: 6px solid #00FFAA;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .time-stamp { color: #808495; font-size: 0.75em; margin-bottom: 10px; display: block; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("✊ FREE-KONGOSSA : Leure Intégré")
+st.title("✊ FREE-KONGOSSA")
+st.caption("Messagerie Sociale Triadique | Souveraineté Totale")
 
-code_racine = st.text_input("🔑 CLÉ DE LIAISON", type="password").strip().upper()
+# Saisie de la clé (Ton secret avec Laetitia)
+code_racine = st.text_input("🔑 VOTRE CLÉ SECRÈTE PARTAGÉE", type="password").strip().upper()
 id_session = generer_identifiant_temporel(code_racine)
 
 if id_session:
     if id_session not in SYSTEME["FLUX"]:
         SYSTEME["FLUX"][id_session] = []
 
-    # Zone d'envoi (simplifiée pour l'exemple)
-    msg = st.text_input("Envoyer un message sécurisé")
-    if msg and st.button("🚀 Diffuser"):
-        cle = Fernet.generate_key()
-        chiffre = Fernet(cle).encrypt(msg.encode())
-        t = len(chiffre)
-        SYSTEME["FLUX"][id_session].append({
-            "fragments": (chiffre[:t//3], chiffre[t//3:2*t//3], chiffre[2*t//3:]),
-            "key": cle, "time": datetime.datetime.now().strftime("%H:%M"), "is_text": True, "is_decoy": False
-        })
-        st.success("Posté dans le tunnel !")
+    # --- ZONE DE PUBLICATION MULTIMÉDIA ---
+    with st.container():
+        st.subheader("➕ Publier dans le tunnel")
+        type_post = st.radio("Format :", ["📝 Texte", "📂 Fichier (Vidéo, Audio, Image, PDF)"], horizontal=True)
+        
+        contenu_final = None
+        nom_f, mime_f = "", ""
+        is_text = True
+
+        if type_post == "📝 Texte":
+            msg = st.text_area("Votre message secret...", placeholder="Écrivez ici...")
+            if msg:
+                contenu_final, nom_f, mime_f, is_text = msg.encode(), "Texte.txt", "text/plain", True
+        else:
+            fichier = st.file_uploader("Choisir un média", type=None)
+            if fichier:
+                contenu_final, nom_f, mime_f, is_text = fichier.getvalue(), fichier.name, fichier.type, False
+
+        if contenu_final and st.button("🚀 DIFFUSER DANS LA TRIADE"):
+            cle_fernet = Fernet.generate_key()
+            donnees_chiffrees = Fernet(cle_fernet).encrypt(contenu_final)
+            
+            # Fragmentation
+            t = len(donnees_chiffrees)
+            p1, p2 = t // 3, (t // 3) * 2
+            
+            nouveau_post = {
+                "fragments": (donnees_chiffrees[:p1], donnees_chiffrees[p1:p2], donnees_chiffrees[p2:]),
+                "key": cle_fernet, "name": nom_f, "type": mime_f, "is_text": is_text,
+                "time": datetime.datetime.now().strftime("%H:%M"), "is_decoy": False
+            }
+            SYSTEME["FLUX"][id_session].append(nouveau_post)
+            st.success(f"✅ Flux {nom_f} éclaté et diffusé !")
 
     st.markdown("---")
     
-    # Affichage du flux
+    # --- FIL D'ACTUALITÉ ---
+    st.subheader("🌐 Fil du Tunnel")
     posts = SYSTEME["FLUX"][id_session]
-    for post in reversed(posts):
-        st.markdown(f'<div class="message-bubble"><b>ID de session actif : {id_session}</b><br>', unsafe_allow_html=True)
-        if post.get("is_text"):
-            try:
-                data = Fernet(post["key"]).decrypt(post["fragments"][0]+post["fragments"][1]+post["fragments"][2])
-                st.write(data.decode())
-            except: st.error("Déchiffrement impossible")
-        st.markdown(f'</div>', unsafe_allow_html=True)
+    
+    if not posts:
+        st.info("Le fil est vide. En attente de données...")
+    else:
+        for i, post in enumerate(reversed(posts)):
+            with st.container():
+                st.markdown(f'<div class="message-bubble"><span class="time-stamp">{post["time"]}</span>', unsafe_allow_html=True)
+                
+                try:
+                    # Fusion et Déchiffrement
+                    complet = post["fragments"][0] + post["fragments"][1] + post["fragments"][2]
+                    data = Fernet(post["key"]).decrypt(complet)
+                    
+                    if post["is_text"]:
+                        st.write(data.decode())
+                    else:
+                        st.write(f"📁 **{post['name']}**")
+                        # Affichage intelligent selon le type
+                        if "image" in post["type"]: st.image(data)
+                        elif "video" in post["type"]: st.video(data)
+                        elif "audio" in post["type"]: st.audio(data)
+                        
+                        st.download_button(f"📥 Récupérer {post['name']}", data, file_name=post["name"], key=f"btn_{i}")
+                except Exception as e:
+                    st.error("Rupture du flux : clé invalide ou données corrompues.")
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    if st.button("🧨 TOUT DÉTRUIRE (DISSIPATION)"):
+        SYSTEME["FLUX"][id_session] = []
+        st.rerun()
+
 else:
-    st.info("Entrez votre clé. Pendant ce temps, le système génère des leures pour vous couvrir...")
+    st.info("⚠️ Entrez votre clé pour ouvrir le tunnel. Le système de leures est actif en arrière-plan.")

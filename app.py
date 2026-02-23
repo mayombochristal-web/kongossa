@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 from cryptography.fernet import Fernet
 import datetime
@@ -24,6 +25,9 @@ def init_vault():
         "FLUX": {},           # Messages par session_id
         "PRESENCE": {},       # Présence des utilisateurs
         "HISTORY": set(),     # IDs des messages déjà vus (pour éviter les doublons)
+        # La ligne suivante est un filet de sécurité pour les anciennes versions
+        # (elle ne sera pas utilisée mais évite une KeyError si une référence résiduelle existe)
+        "SEEN_IDS": set(),
     }
 
 VAULT = init_vault()
@@ -221,7 +225,7 @@ if session_id:
             msg_id = hashlib.md5(raw_to_send + str(round(time.time(), 1)).encode()).hexdigest()
             
             with vault_lock:
-                # Vérification des doublons via HISTORY
+                # Vérification des doublons via HISTORY (plus sûr)
                 if msg_id not in VAULT["HISTORY"]:
                     # Chiffrement triadique
                     key = Fernet.generate_key()
@@ -293,3 +297,5 @@ if session_id:
 
 else:
     st.info("🔐 Entrez la clé secrète pour manifester la GEN-Z GABON.")
+```
+

@@ -19,3 +19,5 @@ async def main():
         await asyncio.Future()
 
 asyncio.run(main())
+
+python realtime_server.py

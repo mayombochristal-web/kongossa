@@ -1,216 +1,170 @@
 import streamlit as st
-from cryptography.fernet import Fernet
-import hashlib, time, datetime, random
+import websocket
+import threading
+import json
+import uuid
+import time
+from collections import deque
 
-# =====================================================
-# CONFIG
-# =====================================================
-st.set_page_config(page_title="KONGOSSA v2", page_icon="🇬🇦", layout="centered")
+# =============================
+# SESSION INIT
+# =============================
 
-# =====================================================
-# GLOBAL SERVER MEMORY (SIMULATED BACKEND)
-# =====================================================
-@st.cache_resource
-def server():
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "registry" not in st.session_state:
+    st.session_state.registry = set()
+
+if "media_lock" not in st.session_state:
+    st.session_state.media_lock = {}
+
+if "event_queue" not in st.session_state:
+    st.session_state.event_queue = deque()
+
+if "connected" not in st.session_state:
+    st.session_state.connected = False
+
+# =============================
+# WEBSOCKET
+# =============================
+
+def on_message(ws, message):
+    event = json.loads(message)
+    st.session_state.event_queue.append(event)
+
+def connect_ws():
+    ws = websocket.WebSocketApp(
+        "ws://localhost:8765",
+        on_message=on_message
+    )
+
+    thread = threading.Thread(target=ws.run_forever)
+    thread.daemon = True
+    thread.start()
+
+    st.session_state.ws = ws
+    st.session_state.connected = True
+
+if not st.session_state.connected:
+    connect_ws()
+
+# =============================
+# UTILS
+# =============================
+
+def kongossa_time():
+    return int(time.time() * 1000)
+
+def create_event(event_type, content):
     return {
-        "USERS": {},
-        "ROOMS": {},
-        "REACTIONS": {},
-        "COMMENTS": {},
-        "PRESENCE": {}
+        "id": uuid.uuid4().hex,
+        "time": kongossa_time(),
+        "type": event_type,
+        "content": content
     }
 
-DB = server()
+def media_once(media_id):
+    if media_id in st.session_state.media_lock:
+        return False
+    st.session_state.media_lock[media_id] = True
+    return True
 
-# =====================================================
-# CORE ENGINE
-# =====================================================
-class KongossaCore:
+# =============================
+# UI
+# =============================
 
-    # ---------- AUTH ----------
-    def login(self, key):
-        sid = hashlib.sha256(key.encode()).hexdigest()[:12]
-        DB["USERS"].setdefault(sid, {})
-        DB["ROOMS"].setdefault(sid, [])
-        return sid
+st.title("🔥 KONGOSSA v3")
 
-    # ---------- PRESENCE ----------
-    def heartbeat(self, sid, token):
-        DB["PRESENCE"][f"{sid}:{token}"] = time.time()
+username = st.text_input("Nom", "User")
 
-    def online_users(self, sid):
-        now = time.time()
-        return [
-            k for k,v in DB["PRESENCE"].items()
-            if k.startswith(sid) and now-v < 20
-        ]
+# =============================
+# INPUT TEXTE
+# =============================
 
-    # ---------- POST ----------
-    def post(self, sid, data, name, mtype, is_txt, title):
+msg = st.chat_input("Message...")
 
-        key = Fernet.generate_key()
-        enc = Fernet(key).encrypt(data)
+if msg:
+    event = create_event("text", {
+        "user": username,
+        "text": msg
+    })
 
-        L=len(enc)
+    st.session_state.ws.send(json.dumps(event))
+    st.session_state.event_queue.append(event)
 
-        msg={
-            "id": hashlib.md5(enc).hexdigest(),
-            "k":key,
-            "frags":[enc[:L//3],enc[L//3:2*L//3],enc[2*L//3:]],
-            "title":title,
-            "type":mtype,
-            "name":name,
-            "is_txt":is_txt,
-            "ts":time.time()
-        }
+# =============================
+# AUDIO UPLOAD
+# =============================
 
-        DB["ROOMS"][sid].append(msg)
+audio = st.file_uploader("Audio", type=["mp3","wav"], key="audio")
 
-    # ---------- CLEANUP ----------
-    def cleanup(self,sid):
-        now=time.time()
-        DB["ROOMS"][sid]=[
-            m for m in DB["ROOMS"][sid]
-            if now-m["ts"]<3600
-        ]
+if audio:
+    file_id = uuid.uuid4().hex
+    path = f"media/{file_id}.mp3"
 
-    # ---------- REACTION ----------
-    def react(self,msg_id,emoji):
-        DB["REACTIONS"].setdefault(msg_id,[]).append(emoji)
+    with open(path,"wb") as f:
+        f.write(audio.read())
 
-    # ---------- COMMENT ----------
-    def comment(self,msg_id,text):
-        DB["COMMENTS"].setdefault(msg_id,[]).append({
-            "t":text,
-            "ts":datetime.datetime.now().strftime("%H:%M")
-        })
+    event = create_event("audio", {
+        "user": username,
+        "path": path
+    })
 
-core = KongossaCore()
+    st.session_state.ws.send(json.dumps(event))
+    st.session_state.event_queue.append(event)
 
-# =====================================================
-# STYLE
-# =====================================================
-st.markdown("""
-<style>
-.stApp{background:#000;color:white}
-.card{
- background:#111;
- padding:15px;
- border-radius:14px;
- margin-bottom:20px;
- border:1px solid #222;
-}
-.title{color:#00ffaa;font-weight:900}
-.comment{background:#1a1a1a;padding:6px;border-radius:8px;margin:4px}
-</style>
-""",unsafe_allow_html=True)
+# =============================
+# VIDEO UPLOAD
+# =============================
 
-# =====================================================
-# LOGIN
-# =====================================================
-st.title("🇬🇦 KONGOSSA v2")
+video = st.file_uploader("Vidéo", type=["mp4"], key="video")
 
-if "sid" not in st.session_state:
-    key=st.text_input("🔑 Clé du tunnel",type="password")
-    if st.button("Entrer") and key:
-        st.session_state.sid=core.login(key.upper())
-        st.session_state.token=random.randint(1000,9999)
-        st.rerun()
+if video:
+    file_id = uuid.uuid4().hex
+    path = f"media/{file_id}.mp4"
 
-else:
+    with open(path,"wb") as f:
+        f.write(video.read())
 
-    sid=st.session_state.sid
+    event = create_event("video", {
+        "user": username,
+        "path": path
+    })
 
-    # presence
-    core.heartbeat(sid,st.session_state.token)
+    st.session_state.ws.send(json.dumps(event))
+    st.session_state.event_queue.append(event)
 
-    online=len(core.online_users(sid))
-    if online>1:
-        st.success(f"🟢 {online} personnes dans le tunnel")
+# =============================
+# EVENT PROCESSOR
+# =============================
 
-    core.cleanup(sid)
+def render_event(event):
 
-# =====================================================
-# FEED
-# =====================================================
-    for p in reversed(DB["ROOMS"][sid]):
+    if event["id"] in st.session_state.registry:
+        return
 
-        st.markdown('<div class="card">',unsafe_allow_html=True)
+    st.session_state.registry.add(event["id"])
 
-        if p["title"]:
-            st.markdown(f'<div class="title">{p["title"]}</div>',unsafe_allow_html=True)
+    content = event["content"]
 
-        try:
-            raw=Fernet(p["k"]).decrypt(b"".join(p["frags"]))
+    with st.chat_message(content["user"]):
 
-            if p["is_txt"]:
-                st.write(raw.decode())
-            else:
-                if "image" in p["type"]:
-                    st.image(raw)
-                elif "audio" in p["type"]:
-                    st.audio(raw)
-                elif "video" in p["type"]:
-                    st.video(raw)
+        if event["type"] == "text":
+            st.write(content["text"])
 
-        except:
-            st.error("Signal expiré")
+        elif event["type"] == "audio":
+            if media_once(event["id"]):
+                st.audio(content["path"])
 
-        # reactions
-        reacts=DB["REACTIONS"].get(p["id"],[])
-        cols=st.columns(5)
-        emojis=["❤️","😂","🔥","😮","✊"]
+        elif event["type"] == "video":
+            if media_once(event["id"]):
+                st.video(content["path"])
 
-        for i,e in enumerate(emojis):
-            if cols[i].button(e,key=f"{p['id']}{i}"):
-                core.react(p["id"],e)
-                st.rerun()
+# =============================
+# DISPLAY LOOP
+# =============================
 
-        if reacts:
-            st.caption(" ".join(reacts[-10:]))
-
-        # comments
-        with st.expander("💬 discussions"):
-            for c in DB["COMMENTS"].get(p["id"],[]):
-                st.markdown(f'<div class="comment"><b>{c["ts"]}</b> {c["t"]}</div>',unsafe_allow_html=True)
-
-            new=st.text_input("Commenter",key=f"c{p['id']}")
-            if st.button("Envoyer",key=f"s{p['id']}"):
-                core.comment(p["id"],new)
-                st.rerun()
-
-        st.markdown("</div>",unsafe_allow_html=True)
-
-# =====================================================
-# CREATE POST
-# =====================================================
-    st.divider()
-    st.subheader("➕ Nouveau signal")
-
-    title=st.text_input("Titre")
-
-    tab1,tab2,tab3=st.tabs(["💬 Texte","📸 Média","🎙️ Vocal"])
-
-    with tab1:
-        txt=st.text_area("Message")
-        if st.button("Publier texte"):
-            core.post(sid,txt.encode(),"txt","text",True,title)
-            st.rerun()
-
-    with tab2:
-        f=st.file_uploader("Image/Vidéo")
-        if f and st.button("Publier média"):
-            core.post(sid,f.getvalue(),f.name,f.type,False,title)
-            st.rerun()
-
-    with tab3:
-        audio=st.audio_input("Parler")
-        if audio:
-            core.post(sid,audio.getvalue(),"vocal.wav","audio/wav",False,title)
-            st.rerun()
-
-# =====================================================
-# LIVE LOOP
-# =====================================================
-    time.sleep(8)
-    st.rerun()
+while st.session_state.event_queue:
+    ev = st.session_state.event_queue.popleft()
+    render_event(ev)

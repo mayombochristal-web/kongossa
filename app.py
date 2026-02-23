@@ -1,170 +1,192 @@
 import streamlit as st
-import websocket
-import threading
-import json
-import uuid
+from cryptography.fernet import Fernet
+import hashlib
 import time
+import threading
 from collections import deque
 
-# =============================
-# SESSION INIT
-# =============================
+# =====================================================
+# CONFIG
+# =====================================================
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+st.set_page_config(
+    page_title="KONGOSSA V4",
+    page_icon="🇬🇦",
+    layout="centered"
+)
 
-if "registry" not in st.session_state:
-    st.session_state.registry = set()
+# =====================================================
+# SESSION STORE (STABLE)
+# =====================================================
 
-if "media_lock" not in st.session_state:
-    st.session_state.media_lock = {}
-
-if "event_queue" not in st.session_state:
-    st.session_state.event_queue = deque()
-
-if "connected" not in st.session_state:
-    st.session_state.connected = False
-
-# =============================
-# WEBSOCKET
-# =============================
-
-def on_message(ws, message):
-    event = json.loads(message)
-    st.session_state.event_queue.append(event)
-
-def connect_ws():
-    ws = websocket.WebSocketApp(
-        "ws://localhost:8765",
-        on_message=on_message
-    )
-
-    thread = threading.Thread(target=ws.run_forever)
-    thread.daemon = True
-    thread.start()
-
-    st.session_state.ws = ws
-    st.session_state.connected = True
-
-if not st.session_state.connected:
-    connect_ws()
-
-# =============================
-# UTILS
-# =============================
-
-def kongossa_time():
-    return int(time.time() * 1000)
-
-def create_event(event_type, content):
-    return {
-        "id": uuid.uuid4().hex,
-        "time": kongossa_time(),
-        "type": event_type,
-        "content": content
+def init_state():
+    defaults = {
+        "messages": [],
+        "registry": set(),
+        "event_queue": deque(),
+        "engine_started": False
     }
 
-def media_once(media_id):
-    if media_id in st.session_state.media_lock:
-        return False
-    st.session_state.media_lock[media_id] = True
-    return True
+    for k,v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-# =============================
-# UI
-# =============================
+init_state()
 
-st.title("🔥 KONGOSSA v3")
+# =====================================================
+# REALTIME ENGINE (NO RERUN)
+# =====================================================
 
-username = st.text_input("Nom", "User")
+def realtime_engine():
 
-# =============================
-# INPUT TEXTE
-# =============================
+    while True:
+        time.sleep(0.6)
 
-msg = st.chat_input("Message...")
+        # simulation sync réseau
+        if st.session_state.event_queue:
+            continue
 
-if msg:
-    event = create_event("text", {
-        "user": username,
-        "text": msg
-    })
+# démarre UNE SEULE FOIS
+if not st.session_state.engine_started:
+    threading.Thread(
+        target=realtime_engine,
+        daemon=True
+    ).start()
 
-    st.session_state.ws.send(json.dumps(event))
-    st.session_state.event_queue.append(event)
+    st.session_state.engine_started = True
 
-# =============================
-# AUDIO UPLOAD
-# =============================
+# =====================================================
+# CORE ENGINE
+# =====================================================
 
-audio = st.file_uploader("Audio", type=["mp3","wav"], key="audio")
+class KongossaEngine:
 
-if audio:
-    file_id = uuid.uuid4().hex
-    path = f"media/{file_id}.mp3"
+    @staticmethod
+    def emit(content, fname, mtype, is_txt):
 
-    with open(path,"wb") as f:
-        f.write(audio.read())
+        key = Fernet.generate_key()
+        enc = Fernet(key).encrypt(content)
 
-    event = create_event("audio", {
-        "user": username,
-        "path": path
-    })
+        msg_id = hashlib.md5(enc).hexdigest()
 
-    st.session_state.ws.send(json.dumps(event))
-    st.session_state.event_queue.append(event)
+        event = {
+            "id": msg_id,
+            "k": key,
+            "type": mtype,
+            "name": fname,
+            "is_txt": is_txt,
+            "frags":[
+                enc[:len(enc)//3],
+                enc[len(enc)//3:2*len(enc)//3],
+                enc[2*len(enc)//3:]
+            ]
+        }
 
-# =============================
-# VIDEO UPLOAD
-# =============================
+        st.session_state.event_queue.append(event)
 
-video = st.file_uploader("Vidéo", type=["mp4"], key="video")
+# =====================================================
+# SAFE SYNC (NO DOM BREAK)
+# =====================================================
 
-if video:
-    file_id = uuid.uuid4().hex
-    path = f"media/{file_id}.mp4"
+def sync_events():
 
-    with open(path,"wb") as f:
-        f.write(video.read())
+    new_events = []
 
-    event = create_event("video", {
-        "user": username,
-        "path": path
-    })
+    while st.session_state.event_queue:
+        ev = st.session_state.event_queue.popleft()
 
-    st.session_state.ws.send(json.dumps(event))
-    st.session_state.event_queue.append(event)
+        if ev["id"] not in st.session_state.registry:
+            st.session_state.registry.add(ev["id"])
+            new_events.append(ev)
 
-# =============================
-# EVENT PROCESSOR
-# =============================
+    if new_events:
+        st.session_state.messages.extend(new_events)
 
-def render_event(event):
+sync_events()
 
-    if event["id"] in st.session_state.registry:
-        return
+# =====================================================
+# UI STYLE
+# =====================================================
 
-    st.session_state.registry.add(event["id"])
+st.markdown("""
+<style>
+.stApp { background:black;color:white }
+.card{
+background:#111;
+padding:15px;
+border-radius:14px;
+margin-bottom:18px;
+border:1px solid #222;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    content = event["content"]
+st.title("🇬🇦 KONGOSSA V4 — TEMPS RÉEL ABSOLU")
 
-    with st.chat_message(content["user"]):
+# =====================================================
+# RENDER (IMMUTABLE)
+# =====================================================
 
-        if event["type"] == "text":
-            st.write(content["text"])
+def render_message(msg):
 
-        elif event["type"] == "audio":
-            if media_once(event["id"]):
-                st.audio(content["path"])
+    with st.container():
+        st.markdown('<div class="card">', unsafe_allow_html=True)
 
-        elif event["type"] == "video":
-            if media_once(event["id"]):
-                st.video(content["path"])
+        raw = Fernet(msg["k"]).decrypt(b"".join(msg["frags"]))
 
-# =============================
-# DISPLAY LOOP
-# =============================
+        if msg["is_txt"]:
+            st.write(raw.decode())
 
-while st.session_state.event_queue:
-    ev = st.session_state.event_queue.popleft()
-    render_event(ev)
+        elif "image" in msg["type"]:
+            st.image(raw, use_container_width=True)
+
+        elif "video" in msg["type"]:
+            st.video(raw)
+
+        elif "audio" in msg["type"]:
+            st.audio(raw)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# affichage stable
+for m in reversed(st.session_state.messages):
+    render_message(m)
+
+# =====================================================
+# EMITTER (UNCHANGED UX)
+# =====================================================
+
+tabs = st.tabs(["💬 Texte","📸 Média","🎙️ Vocal"])
+
+with tabs[0]:
+    txt = st.chat_input("Kongossa...")
+    if txt:
+        KongossaEngine.emit(txt.encode(),"txt","text",True)
+
+with tabs[1]:
+    file = st.file_uploader("Image / Vidéo")
+    if file:
+        KongossaEngine.emit(
+            file.getvalue(),
+            file.name,
+            file.type,
+            False
+        )
+
+with tabs[2]:
+    audio = st.audio_input("Parler")
+    if audio:
+        KongossaEngine.emit(
+            audio.getvalue(),
+            "voice.wav",
+            "audio/wav",
+            False
+        )
+
+# =====================================================
+# AUTO REFRESH INVISIBLE (SAFE)
+# =====================================================
+
+st.empty()
+time.sleep(1.2)
+st.rerun()

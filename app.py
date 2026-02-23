@@ -1,23 +1,31 @@
+# ==========================================================
+# GEN Z GABON — FREE-KONGOSSA V12
+# TST ENGINE + MULTI TUNNELS + REALTIME SAFE
+# ==========================================================
+
 import streamlit as st
 import websocket
 import threading
 import json
 import uuid
+import time
 from datetime import datetime
 
-# ===================================================
+# ==========================================================
 # CONFIG
-# ===================================================
+# ==========================================================
 
-st.set_page_config(layout="wide")
+st.set_page_config(
+    page_title="GEN Z GABON — FREE-KONGOSSA",
+    layout="wide"
+)
 
-SERVER_URL = "ws://TON_IP_SERVEUR:8765"
-# exemple:
-# ws://192.168.1.15:8765
+# 🔴 METTRE TON URL RENDER ICI
+SERVER_URL = "wss://TON-SERVER.onrender.com"
 
-# ===================================================
-# SESSION
-# ===================================================
+# ==========================================================
+# SESSION INIT
+# ==========================================================
 
 if "uid" not in st.session_state:
     st.session_state.uid = str(uuid.uuid4())[:6]
@@ -28,76 +36,149 @@ if "messages" not in st.session_state:
 if "ws" not in st.session_state:
     st.session_state.ws = None
 
-# ===================================================
-# WEBSOCKET LISTENER
-# ===================================================
+if "connected_tunnel" not in st.session_state:
+    st.session_state.connected_tunnel = None
 
-def listen(ws):
+if "users_count" not in st.session_state:
+    st.session_state.users_count = 1
+
+
+# ==========================================================
+# WEBSOCKET LISTENER (TST LOOP)
+# ==========================================================
+
+def listener(ws):
 
     while True:
         try:
             msg = ws.recv()
             data = json.loads(msg)
 
-            st.session_state.messages.append(data)
+            # présence tunnel
+            if data.get("type") == "presence":
+                st.session_state.users_count = data["count"]
+                continue
+
+            # anti duplication TST
+            if data not in st.session_state.messages:
+                st.session_state.messages.append(data)
 
         except:
             break
 
-# ===================================================
-# CONNECT
-# ===================================================
 
-tunnel = st.text_input("Code tunnel")
+# ==========================================================
+# CONNECT TUNNEL
+# ==========================================================
 
-if tunnel and st.session_state.ws is None:
+st.title("🇬🇦 GEN Z GABON — FREE-KONGOSSA")
 
-    ws = websocket.WebSocket()
-    ws.connect(SERVER_URL)
+tunnel = st.text_input(
+    "🔐 Code Tunnel",
+    placeholder="Ex: LIBREVILLE"
+).upper()
 
-    ws.send(json.dumps({
-        "type":"join",
-        "tunnel":tunnel
-    }))
+connect = st.button("Connexion Tunnel")
 
-    thread = threading.Thread(
-        target=listen,
-        args=(ws,),
-        daemon=True
+if connect and tunnel:
+
+    try:
+        ws = websocket.WebSocket()
+        ws.connect(SERVER_URL)
+
+        ws.send(json.dumps({
+            "type": "join",
+            "tunnel": tunnel
+        }))
+
+        thread = threading.Thread(
+            target=listener,
+            args=(ws,),
+            daemon=True
+        )
+        thread.start()
+
+        st.session_state.ws = ws
+        st.session_state.connected_tunnel = tunnel
+        st.success("Tunnel synchronisé 🌐")
+
+    except Exception as e:
+        st.error("Connexion impossible au serveur realtime")
+
+
+# ==========================================================
+# STATUS BAR
+# ==========================================================
+
+if st.session_state.connected_tunnel:
+
+    st.info(
+        f"Tunnel : {st.session_state.connected_tunnel} | "
+        f"👥 {st.session_state.users_count} utilisateur(s) connecté(s)"
     )
-    thread.start()
 
-    st.session_state.ws = ws
+# ==========================================================
+# ENVOI MESSAGE
+# ==========================================================
 
-    st.success("Connecté au tunnel mondial")
+if st.session_state.ws:
 
-# ===================================================
-# SEND MESSAGE
-# ===================================================
+    col1, col2 = st.columns([6,1])
 
-msg = st.text_input("Message")
+    with col1:
+        msg = st.text_input("Message")
 
-if st.button("Envoyer") and msg:
+    with col2:
+        send = st.button("Envoyer")
 
-    data = {
-        "type":"text",
-        "user":st.session_state.uid,
-        "content":msg,
-        "time":datetime.now().strftime("%H:%M:%S")
-    }
+    if send and msg:
 
-    st.session_state.messages.append(data)
-    st.session_state.ws.send(json.dumps(data))
+        payload = {
+            "type": "message",
+            "user": st.session_state.uid,
+            "content": msg,
+            "time": datetime.now().strftime("%H:%M:%S")
+        }
 
-# ===================================================
-# DISPLAY
-# ===================================================
+        # local instant (TST ghost)
+        st.session_state.messages.append(payload)
 
-st.markdown("## Conversation")
+        try:
+            st.session_state.ws.send(json.dumps(payload))
+        except:
+            st.warning("Message non envoyé")
+
+# ==========================================================
+# AFFICHAGE CONVERSATION
+# ==========================================================
+
+st.markdown("---")
+st.subheader("Flux du Tunnel")
 
 for m in reversed(st.session_state.messages):
 
-    st.markdown(f"""
-    **{m["user"]}** : {m["content"]}
-    _{m["time"]}_
-    """)
+    align = "right" if m["user"] == st.session_state.uid else "left"
+
+    st.markdown(
+        f"""
+        <div style="
+        text-align:{align};
+        padding:10px;
+        margin:6px;
+        background:#111;
+        border-radius:12px;">
+        <b>{m['user']}</b><br>
+        {m['content']}<br>
+        <small>{m['time']}</small>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# ==========================================================
+# AUTO REFRESH TST (pseudo temps réel Streamlit)
+# ==========================================================
+
+time.sleep(1)
+st.rerun()

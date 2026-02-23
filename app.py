@@ -1,12 +1,14 @@
 import streamlit as st
 from cryptography.fernet import Fernet
 import datetime
+import hashlib
 
 # =====================================================
 # ARCHITECTURE TRIPLE-COFFRE (Mémoire Vive Partagée)
 # =====================================================
 @st.cache_resource
 def initialiser_systeme_triadique():
+    # Le dictionnaire SYSTEME reste en RAM, rien sur disque.
     return {
         "COFFRE_M": {}, # Fragment Mémoire
         "COFFRE_C": {}, # Fragment Cohérence
@@ -16,122 +18,97 @@ def initialiser_systeme_triadique():
 
 SYSTEME = initialiser_systeme_triadique()
 
+def generer_identifiant_temporel(code_base):
+    """
+    Transforme un code simple en identifiant technique qui change toutes les heures.
+    """
+    if not code_base:
+        return None
+    # On récupère l'année, mois, jour et heure actuelle
+    grain_de_sel = datetime.datetime.now().strftime("%Y-%m-%d-%H")
+    # On crée un hash unique pour cette heure précise
+    melange = f"{code_base}-{grain_de_sel}"
+    return hashlib.sha256(melange.encode()).hexdigest()[:12].upper()
+
 # =====================================================
 # INTERFACE SOUVERAINE
 # =====================================================
 st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="wide")
 st.title("✊ FREE-KONGOSSA : Messagerie Triadique")
-st.markdown("---")
+st.info("💡 Le tunnel de transmission change automatiquement chaque heure.")
 
-# Zone de saisie du code (Le lien entre vous)
-code_secret = st.text_input("🔑 CODE SECRET DE LIAISON", help="Le code que vous partagez avec votre proche").strip().upper()
+# Zone de saisie du code secret (Connu seulement de vous deux)
+code_racine = st.text_input("🔑 VOTRE CODE SECRET PARTAGÉ", type="password", help="Ex: Le nom de votre rue d'enfance").strip().upper()
+
+# Génération de l'identifiant de session dynamique
+id_session = generer_identifiant_temporel(code_racine)
 
 tab_emit, tab_recv = st.tabs(["📤 ÉMETTEUR (Envoyer)", "📥 RÉCEPTEUR (Aspirer)"])
 
 # --- SECTION ÉMETTEUR ---
 with tab_emit:
-    st.subheader("📝 Message ou Fichier à transmettre")
-    
-    # Choix du type d'envoi
-    option = st.radio("Que voulez-vous envoyer ?", ["Texte Écrit", "Fichier (Audio, Vidéo, PDF, etc.)"], horizontal=True)
-    
-    contenu_a_chiffrer = None
-    nom_affichage = ""
-    type_mime = ""
-
-    if option == "Texte Écrit":
-        message_texte = st.text_area("Écrivez votre message secret ici...")
-        if message_texte:
-            contenu_a_chiffrer = message_texte.encode() # Conversion du texte en octets
-            nom_affichage = "Message_Texte.txt"
-            type_mime = "text/plain"
+    if not id_session:
+        st.warning("Veuillez saisir un code secret pour activer l'émetteur.")
     else:
-        fichier = st.file_uploader("Choisissez votre fichier (Vidéo, Audio, Image, Doc)", type=None)
-        if fichier:
-            contenu_a_chiffrer = fichier.getvalue()
-            nom_affichage = fichier.name
-            type_mime = fichier.type
+        st.subheader("📝 Préparation du Flux")
+        option = st.radio("Type d'envoi :", ["Texte Écrit", "Fichier"], horizontal=True)
+        
+        contenu = None
+        nom_f, mime_f = "", ""
 
-    if contenu_a_chiffrer and code_secret:
-        if st.button("🚀 Éclater et Sceller dans les Coffres"):
-            # 1. Chiffrement Global
-            cle_unique = Fernet.generate_key()
-            cipher = Fernet(cle_unique)
-            donnees_chiffrees = cipher.encrypt(contenu_a_chiffrer)
+        if option == "Texte Écrit":
+            msg = st.text_area("Message à chiffrer...")
+            if msg:
+                contenu, nom_f, mime_f = msg.encode(), "Message.txt", "text/plain"
+        else:
+            f = st.file_uploader("Document / Multimédia")
+            if f:
+                contenu, nom_f, mime_f = f.getvalue(), f.name, f.type
+
+        if contenu and st.button("🚀 Éclater et Envoyer"):
+            # Chiffrement
+            cle = Fernet.generate_key()
+            donnees_chiffrees = Fernet(cle).encrypt(contenu)
             
-            # 2. Fragmentation Triadique
+            # Fragmentation
             taille = len(donnees_chiffrees)
             p1, p2 = taille // 3, (taille // 3) * 2
             
-            # 3. Distribution dans les 3 coffres
-            SYSTEME["COFFRE_M"][code_secret] = donnees_chiffrees[:p1]
-            SYSTEME["COFFRE_C"][code_secret] = donnees_chiffrees[p1:p2]
-            SYSTEME["COFFRE_D"][code_secret] = donnees_chiffrees[p2:]
+            # Stockage en RAM (Triade)
+            SYSTEME["COFFRE_M"][id_session] = donnees_chiffrees[:p1]
+            SYSTEME["COFFRE_C"][id_session] = donnees_chiffrees[p1:p2]
+            SYSTEME["COFFRE_D"][id_session] = donnees_chiffrees[p2:]
+            SYSTEME["METADATA"][id_session] = {"key": cle, "name": nom_f, "type": mime_f, "text": (option == "Texte Écrit")}
             
-            # 4. Sauvegarde des métadonnées
-            SYSTEME["METADATA"][code_secret] = {
-                "key": cle_unique,
-                "name": nom_affichage,
-                "type": type_mime,
-                "is_text": (option == "Texte Écrit")
-            }
-            
-            st.success(f"✅ Flux {nom_affichage} sécurisé !")
-            st.info(f"Dites à votre proche d'aspirer avec le code : **{code_secret}**")
+            st.success(f"✅ Flux sécurisé sous l'ID : {id_session}")
+            st.write("Le récepteur a jusqu'à la fin de l'heure actuelle pour aspirer le contenu.")
 
 # --- SECTION RÉCEPTEUR ---
 with tab_recv:
-    st.subheader("🌪️ Aspiration du Flux")
-    
-    triade_complete = (
-        code_secret in SYSTEME["COFFRE_M"] and 
-        code_secret in SYSTEME["COFFRE_C"] and 
-        code_secret in SYSTEME["COFFRE_D"]
-    )
-    
-    if triade_complete:
-        meta = SYSTEME["METADATA"][code_secret]
-        st.write(f"📁 Un flux de type **{meta['name']}** est en attente.")
-        
-        if st.button("🔓 Déclencher l'aspiration et la fusion"):
-            try:
-                # 1. Récupération des 3 ondes
-                m = SYSTEME["COFFRE_M"][code_secret]
-                c = SYSTEME["COFFRE_C"][code_secret]
-                d = SYSTEME["COFFRE_D"][code_secret]
-                
-                # 2. Fusion et Déchiffrement
-                flux_total = m + c + d
-                cipher = Fernet(meta['key'])
-                donnees_finales = cipher.decrypt(flux_total)
-                
-                # 3. Affichage selon le type
-                if meta['is_text']:
-                    st.text_area("Message déchiffré :", value=donnees_finales.decode(), height=200)
-                else:
-                    # Pour les vidéos/audios, Streamlit peut les lire directement
-                    if "video" in meta['type']:
-                        st.video(donnees_finales)
-                    elif "audio" in meta['type']:
-                        st.audio(donnees_finales)
-                    
-                    st.download_button(
-                        label="💾 Sauvegarder le fichier sur l'appareil",
-                        data=donnees_finales,
-                        file_name=meta['name'],
-                        mime=meta['type']
-                    )
-                
-                # 4. DISSIPATION (Effacement total)
-                del SYSTEME["COFFRE_M"][code_secret]
-                del SYSTEME["COFFRE_C"][code_secret]
-                del SYSTEME["COFFRE_D"][code_secret]
-                del SYSTEME["METADATA"][code_secret]
-                
-                st.warning("🔒 Le tunnel est fermé. Les données ont été effacées pour votre sécurité.")
-                
-            except Exception as e:
-                st.error("Rupture de symétrie : le flux a été altéré.")
+    if not id_session:
+        st.warning("Veuillez saisir le code secret pour vérifier les flux entrants.")
     else:
-        if code_secret:
-            st.write("🔎 Aucun flux complet trouvé pour ce code.")
+        # Vérification de la présence des 3 fragments
+        if id_session in SYSTEME["COFFRE_M"]:
+            meta = SYSTEME["METADATA"][id_session]
+            st.write(f"📦 Flux détecté : **{meta['name']}**")
+            
+            if st.button("🔓 Aspirer et Détruire"):
+                try:
+                    # Fusion
+                    complet = SYSTEME["COFFRE_M"][id_session] + SYSTEME["COFFRE_C"][id_session] + SYSTEME["COFFRE_D"][id_session]
+                    dechi = Fernet(meta['key']).decrypt(complet)
+                    
+                    if meta['text']:
+                        st.text_area("Message :", dechi.decode())
+                    else:
+                        st.download_button("💾 Télécharger", dechi, file_name=meta['name'], mime=meta['type'])
+                    
+                    # DISSIPATION IMMÉDIATE
+                    for coffre in ["COFFRE_M", "COFFRE_C", "COFFRE_D", "METADATA"]:
+                        del SYSTEME[coffre][id_session]
+                    st.warning("🔒 Données dissipées du serveur.")
+                except:
+                    st.error("Erreur de synchronisation.")
+        else:
+            st.write("🔎 En attente d'un flux correspondant...")

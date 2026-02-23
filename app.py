@@ -6,6 +6,7 @@ import time
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # =====================================================
 # CONFIGURATION & MÉMOIRE (RAM SÉCURISÉE)
@@ -269,7 +270,6 @@ if session_id:
                 st.pyplot(fig)
                 
                 # Téléchargement CSV
-                import pandas as pd
                 df = pd.DataFrame({"Rang": n_vals, "γ_TST": gamma_vals})
                 csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Télécharger les prédictions (CSV)", csv, file_name="tst_predictions.csv")

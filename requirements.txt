@@ -1,5 +1,2 @@
 streamlit
-cryptography
-websockets
-asyncio
-uuid
+websocket-client

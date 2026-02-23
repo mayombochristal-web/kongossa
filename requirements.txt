@@ -1,2 +1,5 @@
 streamlit
 cryptography
+websockets
+asyncio
+uuid

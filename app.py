@@ -6,180 +6,158 @@ import time
 import random
 
 # =====================================================
-# SYSTÈME DE GESTION (RAM & ÉPHÉMÈRE)
+# CONFIGURATION & MÉMOIRE VIVE (RAM)
 # =====================================================
+st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
+
 @st.cache_resource
 def init_vault():
-    # FLUX stocke les messages, PRESENCE les utilisateurs en ligne
+    # Un dictionnaire central unique pour éviter les boucles de données
     return {"FLUX": {}, "PRESENCE": {}}
 
 VAULT = init_vault()
 
 def secure_id(key):
     if not key: return None
-    # L'identifiant change toutes les heures pour rompre le traçage
+    # L'ID change toutes les heures : protection contre le traçage long terme
     h = f"{key}-{datetime.datetime.now().strftime('%Y-%m-%d-%H')}"
     return hashlib.sha256(h.encode()).hexdigest()[:12].upper()
 
 # =====================================================
-# DESIGN FUTURISTE GABONAIS (CSS)
+# DESIGN IMMERSIF (INSTAGRAM DARK MODE)
 # =====================================================
-st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
-
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600;900&display=swap');
     * { font-family: 'Outfit', sans-serif; }
-    .stApp { background: radial-gradient(circle at top, #0f2027, #203a43, #2c5364); }
+    .stApp { background: #000000; }
     
-    /* Cartes Glassmorphism */
-    .post-card {
+    /* Bulles de conversation */
+    .chat-bubble {
         background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(15px);
-        border-radius: 25px;
-        padding: 20px;
-        margin-bottom: 20px;
+        backdrop-filter: blur(10px);
+        border-radius: 18px;
+        padding: 15px;
+        margin: 8px 0;
         border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        width: fit-content;
+        max-width: 85%;
     }
     
-    /* Timer de destruction */
-    .timer-badge {
-        background: linear-gradient(90deg, #ff4b2b, #ff416c);
-        color: white; padding: 4px 12px; border-radius: 20px;
-        font-size: 0.7em; font-weight: bold; float: right;
+    .timer-text {
+        color: #ff4b2b; font-size: 0.65em; font-weight: bold;
+        display: block; margin-top: 5px; text-transform: uppercase;
     }
     
-    .online-indicator {
-        color: #00ffaa; font-size: 0.8em; font-weight: bold;
-        text-shadow: 0 0 10px #00ffaa;
+    .presence-bar {
+        background: rgba(0, 255, 170, 0.1);
+        color: #00ffaa; padding: 5px 15px; border-radius: 20px;
+        font-size: 0.8em; text-align: center; margin-bottom: 20px;
     }
-    
-    .app-header {
-        text-align: center; font-weight: 900; font-size: 3em;
-        background: linear-gradient(to right, #00ffaa, #00d4ff);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        margin-bottom: 0px;
-    }
+
+    /* Fixer la zone d'envoi en bas sur mobile */
+    div[data-testid="stExpander"] { border: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# INTERFACE D'ACCÈS
+# LOGIQUE DE SESSION
 # =====================================================
-st.markdown('<h1 class="app-header">GEN-Z GABON</h1>', unsafe_allow_html=True)
-st.caption("<center>Souveraineté. Éphémérité. Liberté.</center>", unsafe_allow_html=True)
+st.markdown('<h1 style="text-align:center; color:#00ffaa; font-weight:900;">GEN-Z GABON</h1>', unsafe_allow_html=True)
 
-secret_key = st.text_input("🔑 CLÉ DU TUNNEL", type="password", placeholder="Secret partagé...").strip().upper()
+with st.expander("🔑 CLÉ DU TUNNEL", expanded=True):
+    secret_key = st.text_input("SECRET", type="password", label_visibility="collapsed").strip().upper()
+
 session_id = secure_id(secret_key)
 
 if session_id:
-    # Présence temps réel
+    # Système de présence (anti-ghosting)
     if "u_token" not in st.session_state: st.session_state.u_token = random.randint(100, 999)
-    current_time = time.time()
-    VAULT["PRESENCE"][f"{session_id}-{st.session_state.u_token}"] = current_time
+    VAULT["PRESENCE"][f"{session_id}-{st.session_state.u_token}"] = time.time()
     
     if session_id not in VAULT["FLUX"]: VAULT["FLUX"][session_id] = []
 
-    # Vérification présence de l'autre
-    peers = [k for k, v in VAULT["PRESENCE"].items() if k.startswith(session_id) and (current_time - v) < 20]
-    if len(peers) > 1:
-        st.markdown('<p class="online-indicator">🟢 SIGNAL ACTIF : TA SŒUR EST DANS LE TUNNEL</p>', unsafe_allow_html=True)
+    # Vérifier si la sœur est là
+    others = [k for k, v in VAULT["PRESENCE"].items() if k.startswith(session_id) and (time.time() - v) < 15]
+    if len(others) > 1:
+        st.markdown('<div class="presence-bar">● TA SŒUR EST EN LIGNE</div>', unsafe_allow_html=True)
 
     # =====================================================
-    # CRÉATION MULTIMÉDIA (CAPTURE LIVE)
+    # 1. FIL DE CONVERSATION (LES DERNIERS EN BAS)
     # =====================================================
-    st.markdown("### ⚡ Diffuser un signal")
-    tabs = st.tabs(["💬 Texte", "📷 Caméra", "🎙️ Micro", "📂 Fichier"])
+    # Nettoyage automatique des messages expirés (3600s = 1h)
+    VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["timestamp"]) < 3600]
     
-    content, name, m_type, is_txt = None, "", "", False
-
-    with tabs[0]:
-        msg = st.chat_input("Un Kongossa ?")
-        if msg: content, name, m_type, is_txt = msg.encode(), "txt", "text", True
-
-    with tabs[1]:
-        photo = st.camera_input("Capture instantanée")
-        if photo: content, name, m_type = photo.getvalue(), "live.jpg", "image/jpeg"
-
-    with tabs[2]:
-        vocal = st.audio_input("Mémo vocal souverain")
-        if vocal: content, name, m_type = vocal.getvalue(), "vocal.wav", "audio/wav"
-
-    with tabs[3]:
-        doc = st.file_uploader("Tout document", type=None)
-        if doc: content, name, m_type = doc.getvalue(), doc.name, doc.type
-
-    if content:
-        # Sécurisation Triadique
-        key = Fernet.generate_key()
-        f = Fernet(key)
-        encrypted_data = f.encrypt(content)
-        size = len(encrypted_data)
-        
-        VAULT["FLUX"][session_id].append({
-            "f1": encrypted_data[:size//3], 
-            "f2": encrypted_data[size//3:2*size//3], 
-            "f3": encrypted_data[2*size//3:],
-            "k": key, "name": name, "type": m_type, "is_txt": is_txt,
-            "timestamp": time.time(), # Pour le compte à rebours
-            "expiry": 3600 # Durée de vie : 1 heure (3600 sec)
-        })
-        st.balloons()
-        st.rerun()
+    chat_container = st.container()
+    with chat_container:
+        posts = VAULT["FLUX"][session_id]
+        if not posts:
+            st.caption("<center>Aucun message. Le tunnel est vierge.</center>", unsafe_allow_html=True)
+        else:
+            for i, p in enumerate(posts): # Ordre chronologique : premier arrivé en haut
+                with st.container():
+                    st.markdown('<div class="chat-bubble">', unsafe_allow_html=True)
+                    try:
+                        # Reconstitution Triadique
+                        data = Fernet(p["k"]).decrypt(p["f1"] + p["f2"] + p["f3"])
+                        
+                        if p["is_txt"]:
+                            st.markdown(f"**{data.decode()}**")
+                        else:
+                            st.caption(f"📎 {p['name']}")
+                            if "image" in p["type"]: st.image(data)
+                            elif "video" in p["type"]: st.video(data)
+                            elif "audio" in p["type"] or p["name"].endswith(('.aac', '.m4a', '.wav')):
+                                st.audio(data)
+                            st.download_button("💾 Aspirer", data, file_name=p["name"], key=f"dl_{i}")
+                    except:
+                        st.error("🔒 Fragment corrompu")
+                    
+                    # Timer visuel
+                    rem = int(3600 - (time.time() - p["timestamp"]))
+                    st.markdown(f'<span class="timer-text">🔥 DISSIPATION DANS {rem // 60} min</span>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
     # =====================================================
-    # FLUX DYNAMIQUE & AUTO-DESTRUCT
+    # 2. PANNEAU D'ENVOI (EN BAS)
     # =====================================================
     st.markdown("---")
-    st.subheader("🌐 Tunnel Temporel")
-    
-    feed = st.empty()
-    with feed.container():
-        # Filtrage des messages expirés
-        active_posts = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["timestamp"]) < p["expiry"]]
-        VAULT["FLUX"][session_id] = active_posts # Nettoyage mémoire
+    with st.expander("➕ ENVOYER UN SIGNAL", expanded=True):
+        mode = st.tabs(["💬 Texte", "📷 Caméra", "🎙️ Micro", "📂"])
         
-        if not active_posts:
-            st.info("Le tunnel est vide. Les messages précédents ont été désintégrés.")
-        else:
-            for i, p in enumerate(reversed(active_posts)):
-                # Calcul du temps restant
-                temps_restant = int(p["expiry"] - (time.time() - p["timestamp"]))
-                minutes = temps_restant // 60
-                
-                st.markdown(f'''
-                    <div class="post-card">
-                        <span class="timer-badge">⏳ AUTO-DESTRUCT : {minutes}m</span>
-                        <p style="font-size:0.8em; opacity:0.6;">Signal émis à {datetime.datetime.fromtimestamp(p["timestamp"]).strftime("%H:%M")}</p>
-                ''', unsafe_allow_html=True)
-                
-                try:
-                    # Reconstruction
-                    decrypted = Fernet(p["k"]).decrypt(p["f1"] + p["f2"] + p["f3"])
-                    
-                    if p["is_txt"]:
-                        st.markdown(f"### {decrypted.decode()}")
-                    else:
-                        st.write(f"📎 {p['name']}")
-                        if "image" in p["type"]: st.image(decrypted)
-                        elif "video" in p["type"]: st.video(decrypted)
-                        elif "audio" in p["type"] or p["name"].endswith(('.aac', '.m4a', '.wav')):
-                            st.audio(decrypted)
-                        st.download_button("💾 Aspirer", decrypted, file_name=p["name"], key=f"dl_{i}")
-                except:
-                    st.error("Rupture de signal.")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
+        content, name, m_type, is_txt = None, "", "", False
 
-    # Rafraîchissement automatique toutes les 10 secondes
+        with mode[0]:
+            msg = st.chat_input("Kongossa...")
+            if msg: content, name, m_type, is_txt = msg.encode(), "txt", "text", True
+        with mode[1]:
+            photo = st.camera_input("Shoot")
+            if photo: content, name, m_type = photo.getvalue(), "img.jpg", "image/jpeg"
+        with mode[2]:
+            vocal = st.audio_input("Vocal")
+            if vocal: content, name, m_type = vocal.getvalue(), "voice.wav", "audio/wav"
+        with mode[3]:
+            f = st.file_uploader("Fichier", label_visibility="collapsed")
+            if f: content, name, m_type = f.getvalue(), f.name, f.type
+
+        if content:
+            # Sécurité Triadique (Chiffrement + Éclatement)
+            key = Fernet.generate_key()
+            box = Fernet(key).encrypt(content)
+            l = len(box)
+            VAULT["FLUX"][session_id].append({
+                "f1": box[:l//3], "f2": box[l//3:2*l//3], "f3": box[2*l//3:],
+                "k": key, "name": name, "type": m_type, "is_txt": is_txt,
+                "timestamp": time.time()
+            })
+            st.rerun()
+
+    # =====================================================
+    # 3. ANTI-RAM ET AUTO-REFRESH
+    # =====================================================
+    # Rafraîchissement lent (10s) pour éviter de faire ramer Streamlit
     time.sleep(10)
     st.rerun()
 
 else:
-    st.markdown("""
-    <div style="text-align: center; margin-top: 100px; color: #00ffaa; opacity: 0.7;">
-        <h3>En attente de la clé de déchiffrement...</h3>
-        <p>Tunnel sécurisé par protocole Triadique.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.info("🔐 Le tunnel attend votre clé secrète pour se manifester.")

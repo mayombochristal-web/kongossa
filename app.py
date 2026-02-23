@@ -1,7 +1,8 @@
-# ==========================================================
-# GEN Z GABON FREE-KONGOSSA — V12 STABLE EDITION
-# TTU-MC3 × TST × STREAMLIT CLOUD SAFE
-# ==========================================================
+# ============================================================
+# GEN Z GABON FREE-KONGOSSA — V12 FINAL
+# TTU-MC3 × TST SOCIAL ENGINE
+# STREAMLIT CLOUD SAFE
+# ============================================================
 
 import streamlit as st
 import uuid
@@ -9,9 +10,9 @@ import hashlib
 import time
 from datetime import datetime
 
-# ==========================================================
-# CONFIGURATION SAFE
-# ==========================================================
+# ============================================================
+# CONFIG
+# ============================================================
 
 st.set_page_config(
     page_title="GEN Z GABON FREE-KONGOSSA",
@@ -19,77 +20,69 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ==========================================================
-# SESSION INIT (ANTI-CRASH)
-# ==========================================================
+# ============================================================
+# TTU-MC3 CORE
+# ============================================================
+
+class TTUCore:
+
+    def energy(self, users, messages):
+        return round(0.6*users + 0.3*messages + 0.1*(users*messages), 2)
+
+ttu = TTUCore()
+
+# ============================================================
+# SESSION INIT
+# ============================================================
 
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())[:8]
 
-if "tunnel_id" not in st.session_state:
-    st.session_state.tunnel_id = None
+if "tunnel" not in st.session_state:
+    st.session_state.tunnel = None
 
-if "storage" not in st.session_state:
-    st.session_state.storage = {}
+if "messages" not in st.session_state:
+    st.session_state.messages = {}
 
-if "seen_hash" not in st.session_state:
-    st.session_state.seen_hash = set()
+if "pending_file" not in st.session_state:
+    st.session_state.pending_file = None
 
-# ==========================================================
-# STYLE TST MODE FANTÔME
-# ==========================================================
+# ============================================================
+# STYLE TST (MODE FANTÔME)
+# ============================================================
 
 st.markdown("""
 <style>
+
 html, body, [class*="css"] {
-    background-color:#050505;
-    color:#EAEAEA;
+    background:#050505;
+    color:white;
     font-family:system-ui;
 }
 
-.block-container {
-    padding-top: 1rem;
-}
-
-.tst-card {
+.tst-card{
     background:#0f0f0f;
-    padding:16px;
+    padding:14px;
     border-radius:14px;
-    margin-bottom:12px;
+    margin-bottom:10px;
     border:1px solid #1f1f1f;
 }
 
-.meta {
-    font-size:11px;
-    color:#888;
-}
-
-.tunnel-box {
-    background:#111;
-    padding:20px;
-    border-radius:12px;
-}
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================================
-# TTU CORE ENERGY
-# ==========================================================
-
-class TTUEngine:
-    def compute(self, users, messages):
-        return round((0.6*users + 0.3*messages + 0.1*(users*messages)),2)
-
-ttu = TTUEngine()
-
-# ==========================================================
+# ============================================================
 # HEADER
-# ==========================================================
+# ============================================================
 
 col1, col2 = st.columns([1,6])
 
 with col1:
-    logo = st.file_uploader("Logo", type=["png","jpg","jpeg"], label_visibility="collapsed")
+    logo = st.file_uploader(
+        "logo",
+        type=["png","jpg","jpeg"],
+        label_visibility="collapsed"
+    )
     if logo:
         st.image(logo, width=90)
 
@@ -97,148 +90,154 @@ with col2:
     st.title("GEN Z GABON FREE-KONGOSSA")
     st.caption("TTU-MC3 × TST — Mode Fantôme Permanent")
 
-# ==========================================================
-# CREATION / REJOINDRE TUNNEL
-# ==========================================================
+# ============================================================
+# TUNNEL
+# ============================================================
 
 def hash_tunnel(code):
     return hashlib.sha256(code.encode()).hexdigest()[:16]
 
-st.markdown("### Tunnel Sécurisé")
-
-code = st.text_input("Entrer ou créer un code tunnel")
+code = st.text_input(
+    "Code tunnel",
+    placeholder="LIBREVILLE2030"
+)
 
 if code:
-    st.session_state.tunnel_id = hash_tunnel(code)
+    st.session_state.tunnel = hash_tunnel(code)
 
-if st.session_state.tunnel_id:
+# ============================================================
+# MAIN SYSTEM
+# ============================================================
 
-    tunnel = st.session_state.tunnel_id
+if st.session_state.tunnel:
 
-    if tunnel not in st.session_state.storage:
-        st.session_state.storage[tunnel] = []
+    tunnel = st.session_state.tunnel
+
+    if tunnel not in st.session_state.messages:
+        st.session_state.messages[tunnel] = []
 
     st.success(f"Tunnel actif : {tunnel}")
 
-    # ======================================================
-    # ONGLET STRUCTURE
-    # ======================================================
+    # ========================================================
+    # ONGLET FIXES (POSITION STABLE)
+    # ========================================================
 
-    tab_text, tab_media = st.tabs(["Message Texte", "Importer Fichier"])
+    tab_text, tab_file = st.tabs(["💬 Messages", "📎 Fichiers"])
 
-    # ---------------------------
-    # 1️⃣ MESSAGE TEXTE
-    # ---------------------------
+    # ========================================================
+    # TAB 1 — MESSAGE TEXTE
+    # ========================================================
 
     with tab_text:
 
         with st.form("text_form", clear_on_submit=True):
-            text_msg = st.text_area("Votre message")
+            msg = st.text_input("Message fantôme")
             send_text = st.form_submit_button("Envoyer")
 
-            if send_text and text_msg.strip():
+            if send_text and msg.strip():
 
-                msg_id = hashlib.sha256(text_msg.encode()).hexdigest()
+                st.session_state.messages[tunnel].append({
+                    "type":"text",
+                    "user":st.session_state.user_id,
+                    "content":msg,
+                    "time":datetime.now().strftime("%H:%M:%S")
+                })
 
-                if msg_id not in st.session_state.seen_hash:
-                    st.session_state.seen_hash.add(msg_id)
+    # ========================================================
+    # TAB 2 — FICHIERS
+    # ========================================================
 
-                    st.session_state.storage[tunnel].append({
-                        "type":"text",
-                        "user":st.session_state.user_id,
-                        "content":text_msg,
-                        "time":datetime.now().strftime("%H:%M:%S")
-                    })
-
-                    st.rerun()
-
-    # ---------------------------
-    # 2️⃣ IMPORT MEDIA
-    # ---------------------------
-
-    with tab_media:
+    with tab_file:
 
         uploaded = st.file_uploader(
-            "Importer image, vidéo, audio ou document",
+            "Importer photo, vidéo ou fichier",
             type=None
         )
 
+        # Upload terminé → stocker
         if uploaded:
+            st.session_state.pending_file = uploaded
+            st.success("Fichier prêt à envoyer ✅")
 
-            st.info("Fichier prêt à être envoyé")
+        # Bouton apparaît seulement après upload
+        if st.session_state.pending_file:
 
-            if st.button("Envoyer Fichier"):
+            if st.button("Envoyer le fichier"):
 
-                file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
+                file = st.session_state.pending_file
 
-                if file_hash not in st.session_state.seen_hash:
-                    st.session_state.seen_hash.add(file_hash)
+                st.session_state.messages[tunnel].append({
+                    "type":"file",
+                    "user":st.session_state.user_id,
+                    "content":file,
+                    "filename":file.name,
+                    "time":datetime.now().strftime("%H:%M:%S")
+                })
 
-                    st.session_state.storage[tunnel].append({
-                        "type":"file",
-                        "user":st.session_state.user_id,
-                        "filename":uploaded.name,
-                        "filetype":uploaded.type,
-                        "data":uploaded.getvalue(),
-                        "time":datetime.now().strftime("%H:%M:%S")
-                    })
+                st.session_state.pending_file = None
+                st.rerun()
 
-                    st.rerun()
+    # ========================================================
+    # FLUX GLOBAL
+    # ========================================================
 
-    # ======================================================
-    # AFFICHAGE FLUX
-    # ======================================================
+    st.markdown("### Flux TST Synchronisé")
 
-    st.markdown("### Flux du Tunnel")
+    for m in reversed(st.session_state.messages[tunnel][-40:]):
 
-    container = st.container()
+        if m["type"] == "text":
 
-    with container:
+            st.markdown(f"""
+            <div class="tst-card">
+            <b>{m["user"]}</b><br>
+            {m["content"]}
+            <div style="font-size:11px;color:#888">
+            {m["time"]}
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        for item in reversed(st.session_state.storage[tunnel][-50:]):
+        elif m["type"] == "file":
 
-            st.markdown('<div class="tst-card">', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="tst-card">
+            <b>{m["user"]}</b><br>
+            📎 {m["filename"]}
+            <div style="font-size:11px;color:#888">
+            {m["time"]}
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            st.write(f"Utilisateur : {item['user']}")
+            file = m["content"]
 
-            if item["type"] == "text":
-                st.write(item["content"])
+            if file.type.startswith("image"):
+                st.image(file)
 
-            if item["type"] == "file":
+            elif file.type.startswith("video"):
+                st.video(file)
 
-                if "image" in item["filetype"]:
-                    st.image(item["data"], use_container_width=True)
+            else:
+                st.download_button(
+                    "Télécharger",
+                    file,
+                    file_name=file.name
+                )
 
-                elif "video" in item["filetype"]:
-                    st.video(item["data"])
+    # ========================================================
+    # TTU ENERGY
+    # ========================================================
 
-                elif "audio" in item["filetype"]:
-                    st.audio(item["data"])
-
-                else:
-                    st.download_button(
-                        "Télécharger",
-                        item["data"],
-                        file_name=item["filename"]
-                    )
-
-            st.markdown(f'<div class="meta">{item["time"]}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # ======================================================
-    # ENERGIE TTU
-    # ======================================================
-
-    energy = ttu.compute(
+    energy = ttu.energy(
         1,
-        len(st.session_state.storage[tunnel])
+        len(st.session_state.messages[tunnel])
     )
 
-    st.caption(f"Energie Système TTU-MC3 : {energy}")
+    st.caption(f"Energie système TTU-MC3 : {energy}")
 
-# ==========================================================
-# REFRESH DOUX STABLE
-# ==========================================================
+# ============================================================
+# REFRESH DOUX (ANTI BUG STREAMLIT)
+# ============================================================
 
 time.sleep(1.2)
 st.rerun()

@@ -1,3 +1,4 @@
+
 ```python
 import streamlit as st
 from cryptography.fernet import Fernet
@@ -5,297 +6,204 @@ import datetime
 import hashlib
 import time
 import random
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import threading
+import base64
 
 # =====================================================
-# CONFIGURATION & MÉMOIRE (RAM SÉCURISÉE)
+# CONFIGURATION & LOGO
 # =====================================================
-st.set_page_config(page_title="GEN-Z GABON • TST", page_icon="🇬🇦", layout="centered")
+st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
 
-# Verrou pour protéger les accès concurrents au VAULT partagé
-vault_lock = threading.Lock()
+def get_base64_logo(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except:
+        return ""
 
+LOGO_B64 = get_base64_logo("logo.png")  # Placez un fichier logo.png dans le répertoire
+
+# =====================================================
+# SYSTÈME DE GESTION (RAM UNIQUEMENT)
+# =====================================================
 @st.cache_resource
 def init_vault():
-    """Initialise le dictionnaire partagé avec toutes les clés nécessaires."""
-    return {
-        "FLUX": {},           # Messages par session_id
-        "PRESENCE": {},       # Présence des utilisateurs
-        "HISTORY": set(),     # IDs des messages déjà vus (pour éviter les doublons)
-        # La ligne suivante est un filet de sécurité pour les anciennes versions
-        # (elle ne sera pas utilisée mais évite une KeyError si une référence résiduelle existe)
-        "SEEN_IDS": set(),
-    }
+    return {"FLUX": {}, "PRESENCE": {}}
 
 VAULT = init_vault()
 
 def secure_id(key):
-    """Génère un identifiant de session sécurisé à partir de la clé."""
     if not key:
         return None
     h = f"{key}-{datetime.datetime.now().strftime('%Y-%m-%d-%H')}"
     return hashlib.sha256(h.encode()).hexdigest()[:12].upper()
 
 # =====================================================
-# MODULE TST : Prédiction des zéros de Riemann
-# =====================================================
-def tst_predict_zeros(n_start, n_end):
-    """Génère les prédictions TST pour les rangs donnés."""
-    # Paramètres validés (issus des travaux précédents)
-    K = 2 * np.pi / 3
-    D = 142386.5947
-    n = np.arange(n_start, n_end + 1)
-    gamma = K * n / np.log(n) + D
-    return n, gamma
-
-def plot_tst_predictions(n, gamma):
-    """Crée un graphique des prédictions."""
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(n, gamma, 'b-', linewidth=1)
-    ax.set_xlabel('Rang n')
-    ax.set_ylabel('γ_n (prédiction TST)')
-    ax.set_title('Prédictions des zéros de Riemann par la TST')
-    ax.grid(alpha=0.3)
-    return fig
-
-# =====================================================
-# DESIGN DARK MODE (GLASSMORPHISM)
+# DESIGN "FUTURISTIC GABON" (CSS)
 # =====================================================
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600;900&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600&display=swap');
+    
     * { font-family: 'Outfit', sans-serif; }
-    .stApp { background-color: #000000; color: #ffffff; }
+    .stApp { background: linear-gradient(180deg, #050505 0%, #0a1a12 100%); }
     
-    .chat-bubble {
-        background: rgba(255, 255, 255, 0.08);
+    /* Logo central */
+    .logo-container { text-align: center; padding: 20px; }
+    .logo-img { width: 120px; filter: drop-shadow(0 0 15px #00ffaa); }
+
+    /* Glassmorphism Cards */
+    .post-card {
+        background: rgba(255, 255, 255, 0.03);
         backdrop-filter: blur(12px);
-        border-radius: 22px;
-        padding: 18px;
-        margin: 12px 0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        width: fit-content;
-        max-width: 88%;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        border-radius: 24px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        transition: 0.3s;
     }
+    .post-card:hover { border: 1px solid #00ffaa; }
+
+    /* Status Presence */
+    .status-active { color: #00ffaa; font-size: 0.8em; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
     
-    .timer { color: #ff4b2b; font-size: 0.75em; font-weight: bold; margin-top: 8px; display: block; }
-    .status-active { color: #00ffaa; font-size: 0.85em; text-align: center; font-weight: 600; margin-bottom: 15px; }
-    .tst-header { color: #ffaa00; font-size: 1.2em; font-weight: bold; margin-top: 20px; }
+    /* Header */
+    .app-title { 
+        background: linear-gradient(90deg, #00ffaa, #00d4ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 2.5em; font-weight: 800; text-align: center;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# LOGIQUE D'ACCÈS
+# INTERFACE PRINCIPALE
 # =====================================================
-st.markdown('<h1 style="text-align:center; color:#00ffaa; font-weight:900; letter-spacing:-1px;">GEN-Z GABON</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align:center; color:#888;">♾️ Communication triadique • TST intégrée</p>', unsafe_allow_html=True)
+st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+if LOGO_B64:
+    st.markdown(f'<img src="data:image/png;base64,{LOGO_B64}" class="logo-img">', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-with st.expander("🔑 CLÉ DU TUNNEL", expanded=True):
-    secret_key = st.text_input("SECRET", type="password", label_visibility="collapsed").strip().upper()
+st.markdown('<h1 class="app-title">GEN-Z GABON</h1>', unsafe_allow_html=True)
+st.caption("<center>L'espace où ta voix est souveraine. Éphémère. Indestructible.</center>", unsafe_allow_html=True)
 
+# Connexion
+secret_key = st.text_input("🔑 CLÉ DU TUNNEL", type="password", placeholder="Entre ton code secret...").strip().upper()
 session_id = secure_id(secret_key)
 
 if session_id:
-    # Gestion de la présence de l'utilisateur
-    if "u_token" not in st.session_state:
-        st.session_state.u_token = random.randint(100, 999)
+    # Initialisation de la session utilisateur
+    if "user_token" not in st.session_state:
+        st.session_state.user_token = random.randint(1000, 9999)
     
-    presence_key = f"{session_id}-{st.session_state.u_token}"
+    # Mise à jour de la présence
+    presence_key = f"{session_id}-{st.session_state.user_token}"
+    VAULT["PRESENCE"][presence_key] = time.time()
     
-    with vault_lock:
-        VAULT["PRESENCE"][presence_key] = time.time()
-        
-        # Nettoyage des présences expirées (plus de 20 secondes)
-        current_time = time.time()
-        expired = [k for k, t in VAULT["PRESENCE"].items() if current_time - t > 20]
-        for k in expired:
-            VAULT["PRESENCE"].pop(k, None)
-        
-        # Initialisation du flux pour cette session si nécessaire
-        if session_id not in VAULT["FLUX"]:
-            VAULT["FLUX"][session_id] = []
+    # Nettoyage des présences expirées (plus de 15 secondes)
+    current_time = time.time()
+    expired_presence = [k for k, t in VAULT["PRESENCE"].items() if current_time - t > 15]
+    for k in expired_presence:
+        VAULT["PRESENCE"].pop(k, None)
+    
+    # Initialisation du flux pour cette session si nécessaire
+    if session_id not in VAULT["FLUX"]:
+        VAULT["FLUX"][session_id] = []
+    
+    # Nettoyage des messages de plus de 60 minutes
+    VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (current_time - p.get("time_obj", 0)) < 3600]
+    
+    # Vérification de la présence d'autres utilisateurs
+    active_peers = [k for k in VAULT["PRESENCE"].keys() if k.startswith(session_id) and k != presence_key]
+    if active_peers:
+        st.markdown('<p class="status-active">● SIGNAL DÉTECTÉ : TA SŒUR EST EN LIGNE</p>', unsafe_allow_html=True)
 
-        # Affichage du statut de connexion
-        others = [k for k in VAULT["PRESENCE"].keys() if k.startswith(session_id) and k != presence_key]
+    # --- FIL D'ACTUALITÉ ---
+    st.markdown("### 🌟 Fil d'Actualité")
+    feed_placeholder = st.empty()
     
-    if others:
-        st.markdown(f'<div class="status-active">● SIGNAL ACTIF : {len(others)} autre(s) connecté(s)</div>', unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div class="status-active">● EN ATTENTE...</div>', unsafe_allow_html=True)
-
-    # =====================================================
-    # 1. FIL DE DISCUSSION (FLUX CHRONOLOGIQUE)
-    # =====================================================
-    with vault_lock:
-        # Nettoyage des messages de plus de 60 minutes
-        VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["ts"]) < 3600]
-        posts = VAULT["FLUX"][session_id].copy()
-    
-    st.markdown("---")
-    chat_container = st.container()
-    with chat_container:
+    with feed_placeholder.container():
+        posts = VAULT["FLUX"][session_id]
         if not posts:
-            st.caption("<center>Aucun message. Le tunnel est vide.</center>", unsafe_allow_html=True)
+            st.info("Le tunnel est vide. Brise le silence.")
         else:
-            for i, p in enumerate(posts):
-                st.markdown('<div class="chat-bubble">', unsafe_allow_html=True)
+            # Afficher les messages du plus récent au plus ancien
+            for i, p in enumerate(reversed(posts)):
+                st.markdown('<div class="post-card">', unsafe_allow_html=True)
+                st.caption(f"🕒 {p['time']}")
                 try:
-                    # Reconstruction triadique sécurisée
-                    k_obj = p.get("k")
-                    fragments = p.get("f1", b"") + p.get("f2", b"") + p.get("f3", b"")
+                    # Reconstruction triadique
+                    raw = p["f1"] + p["f2"] + p["f3"]
+                    data = Fernet(p["k"]).decrypt(raw)
                     
-                    if k_obj and fragments:
-                        data = Fernet(k_obj).decrypt(fragments)
-                        
-                        if p.get("is_txt"):
-                            st.markdown(f"{data.decode()}")
+                    if p["is_txt"]:
+                        st.markdown(f"**{data.decode()}**")
+                    else:
+                        st.write(f"📁 {p['name']}")
+                        if "image" in p["type"]:
+                            st.image(data)
+                        elif "video" in p["type"]:
+                            st.video(data)
+                        elif "audio" in p["type"] or p["name"].lower().endswith(('.aac', '.m4a', '.wav', '.mp3')):
+                            st.audio(data)
                         else:
-                            st.caption(f"📁 {p['name']}")
-                            if "image" in p["type"]:
-                                st.image(data)
-                            elif "video" in p["type"]:
-                                st.video(data)
-                            elif "audio" in p["type"] or p["name"].lower().endswith(('.aac', '.m4a', '.wav', '.mp3')):
-                                st.audio(data)
-                            else:
-                                # Fichier binaire générique
-                                st.download_button("💾 Télécharger", data, file_name=p["name"], key=f"dl_{i}_{p['ts']}")
+                            st.download_button("💾 Aspirer", data, file_name=p["name"], key=f"dl_{i}")
                 except Exception as e:
-                    st.error(f"🔒 Fragment illisible : {str(e)}")
-                
-                # Affichage du temps restant avant auto-destruction
-                rem = int(3600 - (time.time() - p["ts"]))
-                st.markdown(f'<span class="timer">🔥 AUTO-DESTRUCT : {rem // 60} min</span>', unsafe_allow_html=True)
+                    st.error(f"Erreur de signal : {str(e)}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # =====================================================
-    # 2. CAPTURE & ENVOI (ANTI-BOUCLE)
-    # =====================================================
+    # --- BARRE D'ENVOI ---
     st.markdown("---")
     with st.container():
-        mode = st.tabs(["💬 Texte", "📸 Photo", "🎙️ Audio", "📂 Fichier", "🎥 Vidéo"])
+        mode = st.radio("Publier :", ["💬 Texte", "📸 Média"], horizontal=True)
         
-        raw_to_send = None
-        f_name = ""
-        m_type = ""
-        is_txt = False
-
-        with mode[0]:
-            t_in = st.chat_input("Message...")
-            if t_in:
-                raw_to_send = t_in.encode()
-                f_name = "txt"
-                m_type = "text/plain"
+        content, name, m_type, is_txt = None, "", "", False
+        
+        if mode == "💬 Texte":
+            msg = st.chat_input("Exprime-toi...")
+            if msg:
+                content = msg.encode()
+                name = "txt"
+                m_type = "text"
                 is_txt = True
+        else:
+            f = st.file_uploader("Upload tout média (AAC, MP4, JPG...)", type=None)
+            if f:
+                content = f.getvalue()
+                name = f.name
+                m_type = f.type or "application/octet-stream"
+                is_txt = False
 
-        with mode[1]:
-            cam = st.camera_input("Prendre une photo")
-            if cam:
-                raw_to_send = cam.getvalue()
-                f_name = "photo.jpg"
-                m_type = "image/jpeg"
-
-        with mode[2]:
-            mic = st.audio_input("Enregistrer un message vocal")
-            if mic:
-                raw_to_send = mic.getvalue()
-                f_name = "audio.wav"
-                m_type = "audio/wav"
-
-        with mode[3]:
-            upl = st.file_uploader("Choisir un fichier", label_visibility="collapsed")
-            if upl:
-                raw_to_send = upl.getvalue()
-                f_name = upl.name
-                m_type = upl.type or "application/octet-stream"
-
-        with mode[4]:
-            vid = st.file_uploader("Choisir une vidéo", type=["mp4", "mov", "avi", "mkv"], label_visibility="collapsed")
-            if vid:
-                raw_to_send = vid.getvalue()
-                f_name = vid.name
-                m_type = vid.type or "video/mp4"
-
-        # Envoi du message si des données sont présentes
-        if raw_to_send:
-            msg_id = hashlib.md5(raw_to_send + str(round(time.time(), 1)).encode()).hexdigest()
+        if content:
+            # Chiffrement triadique
+            key = Fernet.generate_key()
+            cipher = Fernet(key)
+            encrypted = cipher.encrypt(content)
+            l = len(encrypted)
+            fragment1 = encrypted[:l//3]
+            fragment2 = encrypted[l//3:2*l//3]
+            fragment3 = encrypted[2*l//3:]
             
-            with vault_lock:
-                # Vérification des doublons via HISTORY (plus sûr)
-                if msg_id not in VAULT["HISTORY"]:
-                    # Chiffrement triadique
-                    key = Fernet.generate_key()
-                    cipher = Fernet(key)
-                    encrypted = cipher.encrypt(raw_to_send)
-                    l = len(encrypted)
-                    
-                    # Découpage en trois fragments
-                    fragment1 = encrypted[:l//3]
-                    fragment2 = encrypted[l//3:2*l//3]
-                    fragment3 = encrypted[2*l//3:]
-                    
-                    # Ajout au flux
-                    VAULT["FLUX"][session_id].append({
-                        "f1": fragment1,
-                        "f2": fragment2,
-                        "f3": fragment3,
-                        "k": key,
-                        "name": f_name,
-                        "type": m_type,
-                        "is_txt": is_txt,
-                        "ts": time.time(),
-                        "msg_id": msg_id
-                    })
-                    VAULT["HISTORY"].add(msg_id)
-                    st.rerun()
-                else:
-                    st.warning("Ce message a déjà été envoyé récemment.")
+            # Ajout au flux avec timestamp
+            VAULT["FLUX"][session_id].append({
+                "f1": fragment1,
+                "f2": fragment2,
+                "f3": fragment3,
+                "k": key,
+                "name": name,
+                "type": m_type,
+                "is_txt": is_txt,
+                "time": datetime.datetime.now().strftime("%H:%M"),
+                "time_obj": time.time()  # Pour le nettoyage
+            })
+            st.balloons()
+            st.rerun()
 
-    # =====================================================
-    # 3. MODULE TST : PRÉDICTION DES ZÉROS
-    # =====================================================
-    st.markdown("---")
-    st.markdown('<div class="tst-header">🌀 Théorie Spectrale Triadique</div>', unsafe_allow_html=True)
-    with st.expander("📈 Prédire les zéros de Riemann avec la TST", expanded=False):
-        col1, col2 = st.columns(2)
-        with col1:
-            n_start = st.number_input("Rang de début", min_value=1, value=1, step=1)
-        with col2:
-            n_end = st.number_input("Rang de fin", min_value=n_start, value=min(n_start+100, 1000000), step=1)
-        
-        if st.button("🚀 Générer les prédictions"):
-            with st.spinner("Calcul en cours..."):
-                n_vals, gamma_vals = tst_predict_zeros(int(n_start), int(n_end))
-                st.success(f"Prédictions générées pour n = {n_start} à {n_end}")
-                
-                # Affichage des 10 premières valeurs
-                st.subheader("Aperçu des premières valeurs")
-                preview = pd.DataFrame({"Rang": n_vals[:10], "γ_TST": gamma_vals[:10]})
-                st.dataframe(preview)
-                
-                # Graphique
-                fig = plot_tst_predictions(n_vals, gamma_vals)
-                st.pyplot(fig)
-                
-                # Téléchargement CSV
-                df = pd.DataFrame({"Rang": n_vals, "γ_TST": gamma_vals})
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Télécharger les prédictions (CSV)", csv, file_name="tst_predictions.csv")
-
-    # =====================================================
-    # 4. CONTRÔLE DE DESTRUCTION
-    # =====================================================
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🧨 DISPERSER TOUT LE TUNNEL", use_container_width=True):
-        with vault_lock:
-            VAULT["FLUX"][session_id] = []
-        st.rerun()
+    # Rafraîchissement automatique toutes les 5 secondes pour voir les nouveaux messages
+    time.sleep(5)
+    st.rerun()
 
 else:
-    st.info("🔐 Entrez la clé secrète pour manifester la GEN-Z GABON.")
+    st.warning("Tunnel scellé. Entre ton secret pour voir le flux.")
 ```
 

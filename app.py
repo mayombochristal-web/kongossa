@@ -7,11 +7,15 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import threading
 
 # =====================================================
 # CONFIGURATION & MÉMOIRE (RAM SÉCURISÉE)
 # =====================================================
 st.set_page_config(page_title="GEN-Z GABON • TST", page_icon="🇬🇦", layout="centered")
+
+# Verrou pour protéger les accès concurrents au VAULT partagé
+vault_lock = threading.Lock()
 
 @st.cache_resource
 def init_vault():
@@ -97,20 +101,23 @@ if session_id:
         st.session_state.u_token = random.randint(100, 999)
     
     presence_key = f"{session_id}-{st.session_state.u_token}"
-    VAULT["PRESENCE"][presence_key] = time.time()
     
-    # Nettoyage des présences expirées (plus de 20 secondes)
-    current_time = time.time()
-    expired = [k for k, t in VAULT["PRESENCE"].items() if current_time - t > 20]
-    for k in expired:
-        VAULT["PRESENCE"].pop(k, None)
-    
-    # Initialisation du flux pour cette session si nécessaire
-    if session_id not in VAULT["FLUX"]:
-        VAULT["FLUX"][session_id] = []
+    with vault_lock:
+        VAULT["PRESENCE"][presence_key] = time.time()
+        
+        # Nettoyage des présences expirées (plus de 20 secondes)
+        current_time = time.time()
+        expired = [k for k, t in VAULT["PRESENCE"].items() if current_time - t > 20]
+        for k in expired:
+            VAULT["PRESENCE"].pop(k, None)
+        
+        # Initialisation du flux pour cette session si nécessaire
+        if session_id not in VAULT["FLUX"]:
+            VAULT["FLUX"][session_id] = []
 
-    # Affichage du statut de connexion
-    others = [k for k in VAULT["PRESENCE"].keys() if k.startswith(session_id) and k != presence_key]
+        # Affichage du statut de connexion
+        others = [k for k in VAULT["PRESENCE"].keys() if k.startswith(session_id) and k != presence_key]
+    
     if others:
         st.markdown(f'<div class="status-active">● SIGNAL ACTIF : {len(others)} autre(s) connecté(s)</div>', unsafe_allow_html=True)
     else:
@@ -119,13 +126,14 @@ if session_id:
     # =====================================================
     # 1. FIL DE DISCUSSION (FLUX CHRONOLOGIQUE)
     # =====================================================
-    # Nettoyage des messages de plus de 60 minutes
-    VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["ts"]) < 3600]
+    with vault_lock:
+        # Nettoyage des messages de plus de 60 minutes
+        VAULT["FLUX"][session_id] = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["ts"]) < 3600]
+        posts = VAULT["FLUX"][session_id].copy()
     
     st.markdown("---")
     chat_container = st.container()
     with chat_container:
-        posts = VAULT["FLUX"][session_id]
         if not posts:
             st.caption("<center>Aucun message. Le tunnel est vide.</center>", unsafe_allow_html=True)
         else:
@@ -210,38 +218,38 @@ if session_id:
 
         # Envoi du message si des données sont présentes
         if raw_to_send:
-            # Génération d'un identifiant unique pour éviter les doublons
             msg_id = hashlib.md5(raw_to_send + str(round(time.time(), 1)).encode()).hexdigest()
             
-            # Vérification des doublons via HISTORY (et non SEEN_IDS)
-            if msg_id not in VAULT["HISTORY"]:
-                # Chiffrement triadique
-                key = Fernet.generate_key()
-                cipher = Fernet(key)
-                encrypted = cipher.encrypt(raw_to_send)
-                l = len(encrypted)
-                
-                # Découpage en trois fragments
-                fragment1 = encrypted[:l//3]
-                fragment2 = encrypted[l//3:2*l//3]
-                fragment3 = encrypted[2*l//3:]
-                
-                # Ajout au flux
-                VAULT["FLUX"][session_id].append({
-                    "f1": fragment1,
-                    "f2": fragment2,
-                    "f3": fragment3,
-                    "k": key,
-                    "name": f_name,
-                    "type": m_type,
-                    "is_txt": is_txt,
-                    "ts": time.time(),
-                    "msg_id": msg_id
-                })
-                VAULT["HISTORY"].add(msg_id)
-                st.rerun()
-            else:
-                st.warning("Ce message a déjà été envoyé récemment.")
+            with vault_lock:
+                # Vérification des doublons via HISTORY
+                if msg_id not in VAULT["HISTORY"]:
+                    # Chiffrement triadique
+                    key = Fernet.generate_key()
+                    cipher = Fernet(key)
+                    encrypted = cipher.encrypt(raw_to_send)
+                    l = len(encrypted)
+                    
+                    # Découpage en trois fragments
+                    fragment1 = encrypted[:l//3]
+                    fragment2 = encrypted[l//3:2*l//3]
+                    fragment3 = encrypted[2*l//3:]
+                    
+                    # Ajout au flux
+                    VAULT["FLUX"][session_id].append({
+                        "f1": fragment1,
+                        "f2": fragment2,
+                        "f3": fragment3,
+                        "k": key,
+                        "name": f_name,
+                        "type": m_type,
+                        "is_txt": is_txt,
+                        "ts": time.time(),
+                        "msg_id": msg_id
+                    })
+                    VAULT["HISTORY"].add(msg_id)
+                    st.rerun()
+                else:
+                    st.warning("Ce message a déjà été envoyé récemment.")
 
     # =====================================================
     # 3. MODULE TST : PRÉDICTION DES ZÉROS
@@ -279,16 +287,9 @@ if session_id:
     # =====================================================
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🧨 DISPERSER TOUT LE TUNNEL", use_container_width=True):
-        VAULT["FLUX"][session_id] = []
+        with vault_lock:
+            VAULT["FLUX"][session_id] = []
         st.rerun()
-
-    # =====================================================
-    # 5. RAFRAÎCHISSEMENT AUTOMATIQUE (allégé)
-    # =====================================================
-    # On utilise un placeholder pour éviter les rerun intempestifs
-    placeholder = st.empty()
-    time.sleep(10)
-    st.rerun()
 
 else:
     st.info("🔐 Entrez la clé secrète pour manifester la GEN-Z GABON.")

@@ -3,7 +3,7 @@ from cryptography.fernet import Fernet
 import hashlib, time, uuid
 
 # =====================================================
-# CONFIG APP
+# CONFIG
 # =====================================================
 
 st.set_page_config(
@@ -13,22 +13,23 @@ st.set_page_config(
 )
 
 st.title("🇬🇦 GEN Z GABON")
-st.caption("FREE-KONGOSSA — Réseau Fantôme Décentralisé")
+st.caption("FREE-KONGOSSA — Réseau Fantôme Temps Réel")
 
 # =====================================================
-# 👻 GHOST CORE (TST STATE PERMANENT)
+# 👻 GHOST CORE GLOBAL
 # =====================================================
 
 @st.cache_resource
-def ghost_core():
+def ghost():
     return {
         "BUS": [],
+        "PRESENCE": {},
         "REACTIONS": {},
         "COMMENTS": {},
         "REGISTRY": set()
     }
 
-GHOST = ghost_core()
+G = ghost()
 
 # =====================================================
 # ENGINE
@@ -37,66 +38,76 @@ GHOST = ghost_core()
 class Engine:
 
     def tunnel(self, code):
-        if not code:
-            return None
         return hashlib.sha256(code.encode()).hexdigest()[:12]
 
     def encrypt(self, data):
         k = Fernet.generate_key()
         enc = Fernet(k).encrypt(data)
         L = len(enc)
-        return k, [enc[:L//3], enc[L//3:2*L//3], enc[2*L//3:]]
+        return k,[enc[:L//3],enc[L//3:2*L//3],enc[2*L//3:]]
 
-    def emit(self, src, dst, data, name, mtype, is_txt):
+    def emit(self, src, dst, data, name, typ, is_txt):
 
         sig = hashlib.md5(data+str(time.time()).encode()).hexdigest()
-        if sig in GHOST["REGISTRY"]:
+        if sig in G["REGISTRY"]:
             return
 
-        k, frags = self.encrypt(data)
+        k,f = self.encrypt(data)
 
-        GHOST["BUS"].append({
-            "id": str(uuid.uuid4()),
-            "src": src,
-            "dst": dst,
-            "k": k,
-            "frags": frags,
-            "name": name,
-            "type": mtype,
-            "is_txt": is_txt,
-            "ts": time.time()
+        G["BUS"].append({
+            "id":str(uuid.uuid4()),
+            "src":src,
+            "dst":dst,
+            "k":k,
+            "frags":f,
+            "name":name,
+            "type":typ,
+            "is_txt":is_txt,
+            "ts":time.time()
         })
 
-        GHOST["REGISTRY"].add(sig)
+        G["REGISTRY"].add(sig)
 
 engine = Engine()
 
 # =====================================================
-# SESSION SHADOW VIEW
+# SESSION SHADOW
 # =====================================================
 
 if "msgs" not in st.session_state:
-    st.session_state.msgs = []
+    st.session_state.msgs=[]
 
 if "known" not in st.session_state:
-    st.session_state.known = set()
+    st.session_state.known=set()
+
+if "typing" not in st.session_state:
+    st.session_state.typing=False
 
 # =====================================================
-# SYNC (MODE FANTÔME)
+# PRESENCE HEARTBEAT
 # =====================================================
 
-def ghost_sync(tunnel):
+def update_presence(me):
+    G["PRESENCE"][me]=time.time()
 
-    for m in GHOST["BUS"]:
+def online_users():
+    now=time.time()
+    return [u for u,t in G["PRESENCE"].items() if now-t<5]
+
+# =====================================================
+# SYNC LOOP (MODE FANTÔME)
+# =====================================================
+
+def sync(me):
+    for m in G["BUS"]:
         if m["id"] in st.session_state.known:
             continue
-
-        if m["src"] == tunnel or m["dst"] == tunnel:
+        if m["src"]==me or m["dst"]==me:
             st.session_state.msgs.append(m)
             st.session_state.known.add(m["id"])
 
 # =====================================================
-# LOGIN TUNNEL
+# AUTH
 # =====================================================
 
 if "auth" not in st.session_state:
@@ -104,38 +115,44 @@ if "auth" not in st.session_state:
 
 if not st.session_state.auth:
 
-    code = st.text_input("🔑 Code Tunnel", type="password")
-    target = st.text_input("🎯 Tunnel destinataire")
+    code=st.text_input("🔑 Code Tunnel",type="password")
+    target=st.text_input("🎯 Tunnel destinataire")
 
     if st.button("Entrer"):
         if code:
-            st.session_state.me = engine.tunnel(code)
-            st.session_state.target = engine.tunnel(target) if target else None
+            st.session_state.me=engine.tunnel(code)
+            st.session_state.target=engine.tunnel(target) if target else engine.tunnel(code)
             st.session_state.auth=True
             st.rerun()
 
 else:
 
-    me = st.session_state.me
-    target = st.session_state.target or me
+    me=st.session_state.me
+    target=st.session_state.target
 
-    ghost_sync(me)
+    update_presence(me)
+    sync(me)
+
+    # =====================================================
+    # PRESENCE UI
+    # =====================================================
+
+    online=online_users()
+    st.caption(f"🟢 En ligne : {len(online)} tunnel(s)")
 
     # =====================================================
     # FEED
     # =====================================================
-
-    st.markdown("### Flux Fantôme")
 
     for msg in reversed(st.session_state.msgs):
 
         with st.container():
 
             try:
-                raw = Fernet(msg["k"]).decrypt(b"".join(msg["frags"]))
+                raw=Fernet(msg["k"]).decrypt(b"".join(msg["frags"]))
 
-                direction = "⬅️" if msg["dst"]==me else "➡️"
-                st.caption(f"{direction} {msg['src']} → {msg['dst']}")
+                direction="⬅️" if msg["dst"]==me else "➡️"
+                st.caption(f"{direction} {msg['src']}")
 
                 if msg["is_txt"]:
                     st.write(raw.decode())
@@ -148,65 +165,63 @@ else:
                         st.audio(raw)
 
             except:
-                st.error("Signal fantôme corrompu")
+                st.error("Signal fantôme perdu")
 
             # ================= REACTIONS =================
-            reacts = GHOST["REACTIONS"].get(msg["id"], [])
 
-            cols = st.columns(6)
-            emojis = ["❤️","😂","🔥","😮","✊","👍"]
+            emojis=["❤️","😂","🔥","😮","✊","👍"]
+            cols=st.columns(len(emojis))
 
             for i,e in enumerate(emojis):
-                if cols[i].button(e,key=f"{msg['id']}_{i}"):
-                    GHOST["REACTIONS"].setdefault(msg["id"],[]).append(e)
+                if cols[i].button(e,key=f"{msg['id']}{i}"):
+                    G["REACTIONS"].setdefault(msg["id"],[]).append(e)
                     st.rerun()
 
+            reacts=G["REACTIONS"].get(msg["id"],[])
             if reacts:
                 st.write(" ".join(reacts[-6:]))
 
             # ================= COMMENTS =================
+
             with st.expander(
-                f"💬 Discussions ({len(GHOST['COMMENTS'].get(msg['id'],[]))})"
+                f"💬 Discussions ({len(G['COMMENTS'].get(msg['id'],[]))})"
             ):
+                for c in G["COMMENTS"].get(msg["id"],[]):
+                    st.write("🗨️",c)
 
-                for c in GHOST["COMMENTS"].get(msg["id"],[]):
-                    st.write(f"🗨️ {c}")
-
-                new = st.text_input(
-                    "Répondre...",
-                    key=f"comm_{msg['id']}"
-                )
-
-                if st.button("Envoyer",key=f"send_{msg['id']}"):
+                new=st.text_input("Répondre...",key=f"c{msg['id']}")
+                if st.button("Envoyer",key=f"s{msg['id']}"):
                     if new:
-                        GHOST["COMMENTS"].setdefault(msg["id"],[]).append(new)
+                        G["COMMENTS"].setdefault(msg["id"],[]).append(new)
                         st.rerun()
 
     # =====================================================
-    # EMISSION
+    # COMPOSER FUTUR
     # =====================================================
 
-    st.markdown("---")
-    tabs = st.tabs(["💬 Texte","📸 Média","🎙️ Vocal"])
+    tabs=st.tabs(["💬","📸","🎙️"])
 
     with tabs[0]:
-        txt = st.chat_input("Kongossa...")
+        txt=st.chat_input("Écrire un kongossa...")
         if txt:
             engine.emit(me,target,txt.encode(),"txt","text",True)
             st.rerun()
 
     with tabs[1]:
-        file = st.file_uploader("Image / Vidéo")
+        file=st.file_uploader("Image/Vidéo")
         if file:
             engine.emit(me,target,file.getvalue(),file.name,file.type,False)
             st.rerun()
 
     with tabs[2]:
-        audio = st.audio_input("Vocal")
+        audio=st.audio_input("Vocal")
         if audio:
-            engine.emit(me,target,audio.getvalue(),"audio.wav","audio/wav",False)
+            engine.emit(me,target,audio.getvalue(),"voice.wav","audio/wav",False)
             st.rerun()
 
-    # heartbeat fantôme
-    time.sleep(1.2)
+    # =====================================================
+    # HEARTBEAT TEMPS RÉEL
+    # =====================================================
+
+    time.sleep(1)
     st.rerun()

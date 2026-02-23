@@ -2,113 +2,92 @@ import streamlit as st
 from cryptography.fernet import Fernet
 import datetime
 import hashlib
+import random
 
 # =====================================================
-# ARCHITECTURE TRIPLE-COFFRE (Mémoire Vive Partagée)
+# ARCHITECTURE AVEC SYSTÈME DE LEURES
 # =====================================================
 @st.cache_resource
 def initialiser_systeme_triadique():
-    # Le dictionnaire SYSTEME reste en RAM, rien sur disque.
-    return {
-        "COFFRE_M": {}, # Fragment Mémoire
-        "COFFRE_C": {}, # Fragment Cohérence
-        "COFFRE_D": {}, # Fragment Dissipation
-        "METADATA": {}  # Clés et Noms de fichiers
-    }
+    return {"FLUX": {}}
 
 SYSTEME = initialiser_systeme_triadique()
 
 def generer_identifiant_temporel(code_base):
-    """
-    Transforme un code simple en identifiant technique qui change toutes les heures.
-    """
-    if not code_base:
-        return None
-    # On récupère l'année, mois, jour et heure actuelle
+    if not code_base: return None
     grain_de_sel = datetime.datetime.now().strftime("%Y-%m-%d-%H")
-    # On crée un hash unique pour cette heure précise
-    melange = f"{code_base}-{grain_de_sel}"
-    return hashlib.sha256(melange.encode()).hexdigest()[:12].upper()
+    return hashlib.sha256(f"{code_base}-{grain_de_sel}".encode()).hexdigest()[:12].upper()
+
+# --- GÉNÉRATEUR DE PERSONNAGES FICTIFS (Leures) ---
+def generer_leures_horaires():
+    """Crée des discussions fantômes pour noyer les vrais flux."""
+    prenoms = ["Moussa", "Fatou", "Yannick", "Leila", "Marc", "Aminata", "Christian", "Béatrice"]
+    sujets = ["Le prix du manioc", "Le match de demain", "Recette de cuisine", "Rapport de stage", "Photos de vacances"]
+    
+    # On génère 5 faux IDs de session par heure
+    for i in range(5):
+        faux_secret = f"FAKE_KEY_{i}_{datetime.datetime.now().hour}"
+        faux_id = generer_identifiant_temporel(faux_secret)
+        
+        if faux_id not in SYSTEME["FLUX"] or not SYSTEME["FLUX"][faux_id]:
+            SYSTEME["FLUX"][faux_id] = [{
+                "fragments": (b"x", b"y", b"z"),
+                "key": Fernet.generate_key(),
+                "name": f"{random.choice(sujets)}.pdf",
+                "type": "application/pdf",
+                "time": f"{random.randint(0,23)}:{random.randint(10,59)}",
+                "is_text": False,
+                "is_decoy": True # Marqueur interne
+            }]
+
+# On lance la génération de leures à chaque rafraîchissement
+generer_leures_horaires()
 
 # =====================================================
 # INTERFACE SOUVERAINE
 # =====================================================
-st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="wide")
-st.title("✊ FREE-KONGOSSA : Messagerie Triadique")
-st.info("💡 Le tunnel de transmission change automatiquement chaque heure.")
+st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊")
 
-# Zone de saisie du code secret (Connu seulement de vous deux)
-code_racine = st.text_input("🔑 VOTRE CODE SECRET PARTAGÉ", type="password", help="Ex: Le nom de votre rue d'enfance").strip().upper()
+# CSS pour différencier les bulles
+st.markdown("""
+    <style>
+    .message-bubble { padding: 15px; border-radius: 15px; background-color: #1E1E26; margin-bottom: 10px; border-left: 5px solid #00FFAA; }
+    .decoy-bubble { border-left: 5px solid #555; opacity: 0.7; }
+    </style>
+""", unsafe_allow_html=True)
 
-# Génération de l'identifiant de session dynamique
+st.title("✊ FREE-KONGOSSA : Leure Intégré")
+
+code_racine = st.text_input("🔑 CLÉ DE LIAISON", type="password").strip().upper()
 id_session = generer_identifiant_temporel(code_racine)
 
-tab_emit, tab_recv = st.tabs(["📤 ÉMETTEUR (Envoyer)", "📥 RÉCEPTEUR (Aspirer)"])
+if id_session:
+    if id_session not in SYSTEME["FLUX"]:
+        SYSTEME["FLUX"][id_session] = []
 
-# --- SECTION ÉMETTEUR ---
-with tab_emit:
-    if not id_session:
-        st.warning("Veuillez saisir un code secret pour activer l'émetteur.")
-    else:
-        st.subheader("📝 Préparation du Flux")
-        option = st.radio("Type d'envoi :", ["Texte Écrit", "Fichier"], horizontal=True)
-        
-        contenu = None
-        nom_f, mime_f = "", ""
+    # Zone d'envoi (simplifiée pour l'exemple)
+    msg = st.text_input("Envoyer un message sécurisé")
+    if msg and st.button("🚀 Diffuser"):
+        cle = Fernet.generate_key()
+        chiffre = Fernet(cle).encrypt(msg.encode())
+        t = len(chiffre)
+        SYSTEME["FLUX"][id_session].append({
+            "fragments": (chiffre[:t//3], chiffre[t//3:2*t//3], chiffre[2*t//3:]),
+            "key": cle, "time": datetime.datetime.now().strftime("%H:%M"), "is_text": True, "is_decoy": False
+        })
+        st.success("Posté dans le tunnel !")
 
-        if option == "Texte Écrit":
-            msg = st.text_area("Message à chiffrer...")
-            if msg:
-                contenu, nom_f, mime_f = msg.encode(), "Message.txt", "text/plain"
-        else:
-            f = st.file_uploader("Document / Multimédia")
-            if f:
-                contenu, nom_f, mime_f = f.getvalue(), f.name, f.type
-
-        if contenu and st.button("🚀 Éclater et Envoyer"):
-            # Chiffrement
-            cle = Fernet.generate_key()
-            donnees_chiffrees = Fernet(cle).encrypt(contenu)
-            
-            # Fragmentation
-            taille = len(donnees_chiffrees)
-            p1, p2 = taille // 3, (taille // 3) * 2
-            
-            # Stockage en RAM (Triade)
-            SYSTEME["COFFRE_M"][id_session] = donnees_chiffrees[:p1]
-            SYSTEME["COFFRE_C"][id_session] = donnees_chiffrees[p1:p2]
-            SYSTEME["COFFRE_D"][id_session] = donnees_chiffrees[p2:]
-            SYSTEME["METADATA"][id_session] = {"key": cle, "name": nom_f, "type": mime_f, "text": (option == "Texte Écrit")}
-            
-            st.success(f"✅ Flux sécurisé sous l'ID : {id_session}")
-            st.write("Le récepteur a jusqu'à la fin de l'heure actuelle pour aspirer le contenu.")
-
-# --- SECTION RÉCEPTEUR ---
-with tab_recv:
-    if not id_session:
-        st.warning("Veuillez saisir le code secret pour vérifier les flux entrants.")
-    else:
-        # Vérification de la présence des 3 fragments
-        if id_session in SYSTEME["COFFRE_M"]:
-            meta = SYSTEME["METADATA"][id_session]
-            st.write(f"📦 Flux détecté : **{meta['name']}**")
-            
-            if st.button("🔓 Aspirer et Détruire"):
-                try:
-                    # Fusion
-                    complet = SYSTEME["COFFRE_M"][id_session] + SYSTEME["COFFRE_C"][id_session] + SYSTEME["COFFRE_D"][id_session]
-                    dechi = Fernet(meta['key']).decrypt(complet)
-                    
-                    if meta['text']:
-                        st.text_area("Message :", dechi.decode())
-                    else:
-                        st.download_button("💾 Télécharger", dechi, file_name=meta['name'], mime=meta['type'])
-                    
-                    # DISSIPATION IMMÉDIATE
-                    for coffre in ["COFFRE_M", "COFFRE_C", "COFFRE_D", "METADATA"]:
-                        del SYSTEME[coffre][id_session]
-                    st.warning("🔒 Données dissipées du serveur.")
-                except:
-                    st.error("Erreur de synchronisation.")
-        else:
-            st.write("🔎 En attente d'un flux correspondant...")
+    st.markdown("---")
+    
+    # Affichage du flux
+    posts = SYSTEME["FLUX"][id_session]
+    for post in reversed(posts):
+        st.markdown(f'<div class="message-bubble"><b>ID de session actif : {id_session}</b><br>', unsafe_allow_html=True)
+        if post.get("is_text"):
+            try:
+                data = Fernet(post["key"]).decrypt(post["fragments"][0]+post["fragments"][1]+post["fragments"][2])
+                st.write(data.decode())
+            except: st.error("Déchiffrement impossible")
+        st.markdown(f'</div>', unsafe_allow_html=True)
+else:
+    st.info("Entrez votre clé. Pendant ce temps, le système génère des leures pour vous couvrir...")

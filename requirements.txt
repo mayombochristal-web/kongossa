@@ -1,6 +1,2 @@
-streamlit
-     cryptography
-     numpy
-     matplotlib
-     pandas
-     ```
+  streamlit
+   cryptography

@@ -5,127 +5,126 @@ import hashlib
 import random
 
 # =====================================================
-# ARCHITECTURE MULTI-FLUX & LEURES
+# SYSTÈME DE GESTION DES FLUX
 # =====================================================
 @st.cache_resource
-def initialiser_systeme_triadique():
+def initialiser_systeme():
     return {"FLUX": {}}
 
-SYSTEME = initialiser_systeme_triadique()
+SYSTEME = initialiser_systeme()
 
-def generer_identifiant_temporel(code_base):
+def generer_id(code_base):
     if not code_base: return None
-    grain_de_sel = datetime.datetime.now().strftime("%Y-%m-%d-%H")
-    return hashlib.sha256(f"{code_base}-{grain_de_sel}".encode()).hexdigest()[:12].upper()
-
-def generer_leures_horaires():
-    """Génère du bruit numérique pour saturer le serveur de faux IDs."""
-    sujets = ["Rapport_Vente.pdf", "Vacances.jpg", "Note_Vocale.mp3", "Film_Famille.mp4"]
-    for i in range(5):
-        faux_id = generer_identifiant_temporel(f"FAKE_KEY_{i}_{datetime.datetime.now().hour}")
-        if faux_id not in SYSTEME["FLUX"]:
-            SYSTEME["FLUX"][faux_id] = [{"is_decoy": True, "name": random.choice(sujets), "time": "14:02"}]
-
-generer_leures_horaires()
+    grain = datetime.datetime.now().strftime("%Y-%m-%d-%H")
+    return hashlib.sha256(f"{code_base}-{grain}".encode()).hexdigest()[:10].upper()
 
 # =====================================================
-# INTERFACE RÉSEAU SOCIAL
+# DESIGN & STYLE LUDIQUE
 # =====================================================
-st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="centered")
+st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #0E1117; }
-    .message-bubble { 
-        padding: 20px; border-radius: 20px; background-color: #262730; 
-        margin-bottom: 15px; border-left: 6px solid #00FFAA;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    .main { background-color: #0e1117; }
+    .stButton>button { width: 100%; border-radius: 20px; height: 3em; background-color: #ff4b4b; color: white; }
+    .chat-bubble {
+        background: #262730; padding: 15px; border-radius: 15px;
+        margin-bottom: 15px; border-left: 5px solid #00ffa0;
     }
-    .time-stamp { color: #808495; font-size: 0.75em; margin-bottom: 10px; display: block; }
+    .decoy { opacity: 0.3; filter: blur(1px); }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("✊ FREE-KONGOSSA")
-st.caption("Messagerie Sociale Triadique | Souveraineté Totale")
+# =====================================================
+# BARRE LATERALE (Configuration)
+# =====================================================
+with st.sidebar:
+    st.title("🔐 Accès")
+    code_racine = st.text_input("VOTRE SECRET", type="password").strip().upper()
+    id_session = generer_id(code_racine)
+    
+    if id_session:
+        st.success(f"Tunnel Actif : {id_session}")
+        if st.button("🧨 TOUT DÉTRUIRE"):
+            SYSTEME["FLUX"][id_session] = []
+            st.rerun()
 
-# Saisie de la clé (Ton secret avec Laetitia)
-code_racine = st.text_input("🔑 VOTRE CLÉ SECRÈTE PARTAGÉE", type="password").strip().upper()
-id_session = generer_identifiant_temporel(code_racine)
-
+# =====================================================
+# CORPS DE L'APPLICATION (Colonnes)
+# =====================================================
 if id_session:
-    if id_session not in SYSTEME["FLUX"]:
-        SYSTEME["FLUX"][id_session] = []
+    if id_session not in SYSTEME["FLUX"]: SYSTEME["FLUX"][id_session] = []
 
-    # --- ZONE DE PUBLICATION MULTIMÉDIA ---
-    with st.container():
-        st.subheader("➕ Publier dans le tunnel")
-        type_post = st.radio("Format :", ["📝 Texte", "📂 Fichier (Vidéo, Audio, Image, PDF)"], horizontal=True)
+    # Division de l'écran : 60% Discussion | 40% Envoi
+    col_chat, col_post = st.columns([0.6, 0.4], gap="large")
+
+    # --- COLONNE DROITE : ENVOI LUDIQUE ---
+    with col_post:
+        st.subheader("📤 Envoyer")
         
-        contenu_final = None
-        nom_f, mime_f = "", ""
-        is_text = True
+        with st.container(border=True):
+            option = st.selectbox("Quoi de neuf ?", ["💬 Message", "🖼️ Média (Image/Vidéo)", "🎵 Audio/Vocaux", "📄 Document"])
+            
+            contenu = None
+            nom_f, mime_f, is_text = "", "", False
 
-        if type_post == "📝 Texte":
-            msg = st.text_area("Votre message secret...", placeholder="Écrivez ici...")
-            if msg:
-                contenu_final, nom_f, mime_f, is_text = msg.encode(), "Texte.txt", "text/plain", True
+            if option == "💬 Message":
+                msg = st.text_input("Écris ton message ici...")
+                if msg: contenu, nom_f, mime_f, is_text = msg.encode(), "Msg.txt", "text/plain", True
+            
+            elif option == "🖼️ Média (Image/Vidéo)":
+                f = st.file_uploader("Prends ou choisis une photo/vidéo", type=['png', 'jpg', 'jpeg', 'mp4', 'mov'])
+                if f: contenu, nom_f, mime_f, is_text = f.getvalue(), f.name, f.type, False
+                
+            elif option == "🎵 Audio/Vocaux":
+                f = st.file_uploader("Enregistrement vocal", type=['mp3', 'wav', 'm4a'])
+                if f: contenu, nom_f, mime_f, is_text = f.getvalue(), f.name, f.type, False
+            
+            else:
+                f = st.file_uploader("Fichier")
+                if f: contenu, nom_f, mime_f, is_text = f.getvalue(), f.name, f.type, False
+
+            if contenu and st.button("🚀 PROPULSER DANS LE TUNNEL"):
+                cle = Fernet.generate_key()
+                chiffre = Fernet(cle).encrypt(contenu)
+                t = len(chiffre)
+                
+                SYSTEME["FLUX"][id_session].append({
+                    "frag": (chiffre[:t//3], chiffre[t//3:2*t//3], chiffre[2*t//3:]),
+                    "key": cle, "name": nom_f, "type": mime_f, "text": is_text,
+                    "time": datetime.datetime.now().strftime("%H:%M")
+                })
+                st.balloons() # Petit effet ludique !
+                st.rerun()
+
+    # --- COLONNE GAUCHE : FIL D'ACTUALITÉ ---
+    with col_chat:
+        st.subheader("🌐 Fil Free-Kongossa")
+        posts = SYSTEME["FLUX"][id_session]
+        
+        if not posts:
+            st.write("📭 Le tunnel est vide. En attente de signaux...")
         else:
-            fichier = st.file_uploader("Choisir un média", type=None)
-            if fichier:
-                contenu_final, nom_f, mime_f, is_text = fichier.getvalue(), fichier.name, fichier.type, False
-
-        if contenu_final and st.button("🚀 DIFFUSER DANS LA TRIADE"):
-            cle_fernet = Fernet.generate_key()
-            donnees_chiffrees = Fernet(cle_fernet).encrypt(contenu_final)
-            
-            # Fragmentation
-            t = len(donnees_chiffrees)
-            p1, p2 = t // 3, (t // 3) * 2
-            
-            nouveau_post = {
-                "fragments": (donnees_chiffrees[:p1], donnees_chiffrees[p1:p2], donnees_chiffrees[p2:]),
-                "key": cle_fernet, "name": nom_f, "type": mime_f, "is_text": is_text,
-                "time": datetime.datetime.now().strftime("%H:%M"), "is_decoy": False
-            }
-            SYSTEME["FLUX"][id_session].append(nouveau_post)
-            st.success(f"✅ Flux {nom_f} éclaté et diffusé !")
-
-    st.markdown("---")
-    
-    # --- FIL D'ACTUALITÉ ---
-    st.subheader("🌐 Fil du Tunnel")
-    posts = SYSTEME["FLUX"][id_session]
-    
-    if not posts:
-        st.info("Le fil est vide. En attente de données...")
-    else:
-        for i, post in enumerate(reversed(posts)):
-            with st.container():
-                st.markdown(f'<div class="message-bubble"><span class="time-stamp">{post["time"]}</span>', unsafe_allow_html=True)
-                
-                try:
-                    # Fusion et Déchiffrement
-                    complet = post["fragments"][0] + post["fragments"][1] + post["fragments"][2]
-                    data = Fernet(post["key"]).decrypt(complet)
+            for i, p in enumerate(reversed(posts)):
+                with st.container():
+                    st.markdown(f'<div class="chat-bubble">', unsafe_allow_html=True)
+                    st.caption(f"🕒 {p['time']}")
                     
-                    if post["is_text"]:
-                        st.write(data.decode())
-                    else:
-                        st.write(f"📁 **{post['name']}**")
-                        # Affichage intelligent selon le type
-                        if "image" in post["type"]: st.image(data)
-                        elif "video" in post["type"]: st.video(data)
-                        elif "audio" in post["type"]: st.audio(data)
+                    try:
+                        # Reconstitution
+                        data = Fernet(p["key"]).decrypt(p["frag"][0]+p["frag"][1]+p["frag"][2])
                         
-                        st.download_button(f"📥 Récupérer {post['name']}", data, file_name=post["name"], key=f"btn_{i}")
-                except Exception as e:
-                    st.error("Rupture du flux : clé invalide ou données corrompues.")
-                
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.button("🧨 TOUT DÉTRUIRE (DISSIPATION)"):
-        SYSTEME["FLUX"][id_session] = []
-        st.rerun()
+                        if p["text"]:
+                            st.write(f"**Message :** {data.decode()}")
+                        else:
+                            st.write(f"📁 {p['name']}")
+                            if "image" in p["type"]: st.image(data)
+                            elif "video" in p["type"]: st.video(data)
+                            elif "audio" in p["type"]: st.audio(data)
+                            st.download_button("💾 Récupérer", data, file_name=p["name"], key=f"dl_{i}")
+                    except:
+                        st.error("Erreur de déchiffrement")
+                    st.markdown('</div>', unsafe_allow_html=True)
 
 else:
-    st.info("⚠️ Entrez votre clé pour ouvrir le tunnel. Le système de leures est actif en arrière-plan.")
+    st.info("👋 Bienvenue ! Saisis ta clé secrète dans la barre latérale pour ouvrir ton tunnel.")

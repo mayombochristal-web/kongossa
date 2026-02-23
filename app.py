@@ -1,192 +1,212 @@
 import streamlit as st
 from cryptography.fernet import Fernet
-import hashlib
-import time
-import threading
-from collections import deque
+import hashlib, time, uuid
 
 # =====================================================
-# CONFIG
+# CONFIG APP
 # =====================================================
 
 st.set_page_config(
-    page_title="KONGOSSA V4",
+    page_title="GEN Z GABON FREE-KONGOSSA",
     page_icon="🇬🇦",
     layout="centered"
 )
 
+st.title("🇬🇦 GEN Z GABON")
+st.caption("FREE-KONGOSSA — Réseau Fantôme Décentralisé")
+
 # =====================================================
-# SESSION STORE (STABLE)
+# 👻 GHOST CORE (TST STATE PERMANENT)
 # =====================================================
 
-def init_state():
-    defaults = {
-        "messages": [],
-        "registry": set(),
-        "event_queue": deque(),
-        "engine_started": False
+@st.cache_resource
+def ghost_core():
+    return {
+        "BUS": [],
+        "REACTIONS": {},
+        "COMMENTS": {},
+        "REGISTRY": set()
     }
 
-    for k,v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-init_state()
+GHOST = ghost_core()
 
 # =====================================================
-# REALTIME ENGINE (NO RERUN)
+# ENGINE
 # =====================================================
 
-def realtime_engine():
+class Engine:
 
-    while True:
-        time.sleep(0.6)
+    def tunnel(self, code):
+        if not code:
+            return None
+        return hashlib.sha256(code.encode()).hexdigest()[:12]
 
-        # simulation sync réseau
-        if st.session_state.event_queue:
+    def encrypt(self, data):
+        k = Fernet.generate_key()
+        enc = Fernet(k).encrypt(data)
+        L = len(enc)
+        return k, [enc[:L//3], enc[L//3:2*L//3], enc[2*L//3:]]
+
+    def emit(self, src, dst, data, name, mtype, is_txt):
+
+        sig = hashlib.md5(data+str(time.time()).encode()).hexdigest()
+        if sig in GHOST["REGISTRY"]:
+            return
+
+        k, frags = self.encrypt(data)
+
+        GHOST["BUS"].append({
+            "id": str(uuid.uuid4()),
+            "src": src,
+            "dst": dst,
+            "k": k,
+            "frags": frags,
+            "name": name,
+            "type": mtype,
+            "is_txt": is_txt,
+            "ts": time.time()
+        })
+
+        GHOST["REGISTRY"].add(sig)
+
+engine = Engine()
+
+# =====================================================
+# SESSION SHADOW VIEW
+# =====================================================
+
+if "msgs" not in st.session_state:
+    st.session_state.msgs = []
+
+if "known" not in st.session_state:
+    st.session_state.known = set()
+
+# =====================================================
+# SYNC (MODE FANTÔME)
+# =====================================================
+
+def ghost_sync(tunnel):
+
+    for m in GHOST["BUS"]:
+        if m["id"] in st.session_state.known:
             continue
 
-# démarre UNE SEULE FOIS
-if not st.session_state.engine_started:
-    threading.Thread(
-        target=realtime_engine,
-        daemon=True
-    ).start()
-
-    st.session_state.engine_started = True
+        if m["src"] == tunnel or m["dst"] == tunnel:
+            st.session_state.msgs.append(m)
+            st.session_state.known.add(m["id"])
 
 # =====================================================
-# CORE ENGINE
+# LOGIN TUNNEL
 # =====================================================
 
-class KongossaEngine:
+if "auth" not in st.session_state:
+    st.session_state.auth=False
 
-    @staticmethod
-    def emit(content, fname, mtype, is_txt):
+if not st.session_state.auth:
 
-        key = Fernet.generate_key()
-        enc = Fernet(key).encrypt(content)
+    code = st.text_input("🔑 Code Tunnel", type="password")
+    target = st.text_input("🎯 Tunnel destinataire")
 
-        msg_id = hashlib.md5(enc).hexdigest()
+    if st.button("Entrer"):
+        if code:
+            st.session_state.me = engine.tunnel(code)
+            st.session_state.target = engine.tunnel(target) if target else None
+            st.session_state.auth=True
+            st.rerun()
 
-        event = {
-            "id": msg_id,
-            "k": key,
-            "type": mtype,
-            "name": fname,
-            "is_txt": is_txt,
-            "frags":[
-                enc[:len(enc)//3],
-                enc[len(enc)//3:2*len(enc)//3],
-                enc[2*len(enc)//3:]
-            ]
-        }
+else:
 
-        st.session_state.event_queue.append(event)
+    me = st.session_state.me
+    target = st.session_state.target or me
 
-# =====================================================
-# SAFE SYNC (NO DOM BREAK)
-# =====================================================
+    ghost_sync(me)
 
-def sync_events():
+    # =====================================================
+    # FEED
+    # =====================================================
 
-    new_events = []
+    st.markdown("### Flux Fantôme")
 
-    while st.session_state.event_queue:
-        ev = st.session_state.event_queue.popleft()
+    for msg in reversed(st.session_state.msgs):
 
-        if ev["id"] not in st.session_state.registry:
-            st.session_state.registry.add(ev["id"])
-            new_events.append(ev)
+        with st.container():
 
-    if new_events:
-        st.session_state.messages.extend(new_events)
+            try:
+                raw = Fernet(msg["k"]).decrypt(b"".join(msg["frags"]))
 
-sync_events()
+                direction = "⬅️" if msg["dst"]==me else "➡️"
+                st.caption(f"{direction} {msg['src']} → {msg['dst']}")
 
-# =====================================================
-# UI STYLE
-# =====================================================
+                if msg["is_txt"]:
+                    st.write(raw.decode())
+                else:
+                    if "image" in msg["type"]:
+                        st.image(raw)
+                    elif "video" in msg["type"]:
+                        st.video(raw)
+                    elif "audio" in msg["type"]:
+                        st.audio(raw)
 
-st.markdown("""
-<style>
-.stApp { background:black;color:white }
-.card{
-background:#111;
-padding:15px;
-border-radius:14px;
-margin-bottom:18px;
-border:1px solid #222;
-}
-</style>
-""", unsafe_allow_html=True)
+            except:
+                st.error("Signal fantôme corrompu")
 
-st.title("🇬🇦 KONGOSSA V4 — TEMPS RÉEL ABSOLU")
+            # ================= REACTIONS =================
+            reacts = GHOST["REACTIONS"].get(msg["id"], [])
 
-# =====================================================
-# RENDER (IMMUTABLE)
-# =====================================================
+            cols = st.columns(6)
+            emojis = ["❤️","😂","🔥","😮","✊","👍"]
 
-def render_message(msg):
+            for i,e in enumerate(emojis):
+                if cols[i].button(e,key=f"{msg['id']}_{i}"):
+                    GHOST["REACTIONS"].setdefault(msg["id"],[]).append(e)
+                    st.rerun()
 
-    with st.container():
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+            if reacts:
+                st.write(" ".join(reacts[-6:]))
 
-        raw = Fernet(msg["k"]).decrypt(b"".join(msg["frags"]))
+            # ================= COMMENTS =================
+            with st.expander(
+                f"💬 Discussions ({len(GHOST['COMMENTS'].get(msg['id'],[]))})"
+            ):
 
-        if msg["is_txt"]:
-            st.write(raw.decode())
+                for c in GHOST["COMMENTS"].get(msg["id"],[]):
+                    st.write(f"🗨️ {c}")
 
-        elif "image" in msg["type"]:
-            st.image(raw, use_container_width=True)
+                new = st.text_input(
+                    "Répondre...",
+                    key=f"comm_{msg['id']}"
+                )
 
-        elif "video" in msg["type"]:
-            st.video(raw)
+                if st.button("Envoyer",key=f"send_{msg['id']}"):
+                    if new:
+                        GHOST["COMMENTS"].setdefault(msg["id"],[]).append(new)
+                        st.rerun()
 
-        elif "audio" in msg["type"]:
-            st.audio(raw)
+    # =====================================================
+    # EMISSION
+    # =====================================================
 
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    tabs = st.tabs(["💬 Texte","📸 Média","🎙️ Vocal"])
 
-# affichage stable
-for m in reversed(st.session_state.messages):
-    render_message(m)
+    with tabs[0]:
+        txt = st.chat_input("Kongossa...")
+        if txt:
+            engine.emit(me,target,txt.encode(),"txt","text",True)
+            st.rerun()
 
-# =====================================================
-# EMITTER (UNCHANGED UX)
-# =====================================================
+    with tabs[1]:
+        file = st.file_uploader("Image / Vidéo")
+        if file:
+            engine.emit(me,target,file.getvalue(),file.name,file.type,False)
+            st.rerun()
 
-tabs = st.tabs(["💬 Texte","📸 Média","🎙️ Vocal"])
+    with tabs[2]:
+        audio = st.audio_input("Vocal")
+        if audio:
+            engine.emit(me,target,audio.getvalue(),"audio.wav","audio/wav",False)
+            st.rerun()
 
-with tabs[0]:
-    txt = st.chat_input("Kongossa...")
-    if txt:
-        KongossaEngine.emit(txt.encode(),"txt","text",True)
-
-with tabs[1]:
-    file = st.file_uploader("Image / Vidéo")
-    if file:
-        KongossaEngine.emit(
-            file.getvalue(),
-            file.name,
-            file.type,
-            False
-        )
-
-with tabs[2]:
-    audio = st.audio_input("Parler")
-    if audio:
-        KongossaEngine.emit(
-            audio.getvalue(),
-            "voice.wav",
-            "audio/wav",
-            False
-        )
-
-# =====================================================
-# AUTO REFRESH INVISIBLE (SAFE)
-# =====================================================
-
-st.empty()
-time.sleep(1.2)
-st.rerun()
+    # heartbeat fantôme
+    time.sleep(1.2)
+    st.rerun()

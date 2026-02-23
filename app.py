@@ -1,194 +1,206 @@
 import streamlit as st
 from cryptography.fernet import Fernet
-import datetime
-import hashlib
-import time
+import hashlib, time, datetime, random
 
 # =====================================================
-# CLASSE CŒUR : LOGIQUE TST (TITRES & COMMENTAIRES)
+# CONFIGURATION ET STYLE SOUVERAIN
 # =====================================================
-class TSTEngine:
-    def __init__(self):
-        if "vault" not in st.session_state:
-            st.session_state.vault = {
-                "FLUX": {}, "HISTORY": set(), 
-                "REACTIONS": {}, "COMMENTS": {}
-            }
-        self.db = st.session_state.vault
+st.set_page_config(page_title="GEN Z GABON v2", page_icon="🇬🇦", layout="centered")
 
-    def derive_id(self, key):
-        return hashlib.sha256(key.encode()).hexdigest()[:12].upper() if key else None
-
-    def broadcast(self, sid, content, fname, mtype, is_txt, title=""):
-        sig_hash = hashlib.md5(content + fname.encode() + title.encode()).hexdigest()
-        if sig_hash not in self.db["HISTORY"]:
-            k = Fernet.generate_key()
-            enc = Fernet(k).encrypt(content)
-            msg_id = f"sig_{int(time.time()*1000)}"
-            payload = {
-                "id": msg_id, "k": k, "ts": time.time(), "is_txt": is_txt,
-                "name": fname, "type": mtype, "title": title,
-                "frags": [enc[:len(enc)//3], enc[len(enc)//3:2*len(enc)//3], enc[2*len(enc)//3:]]
-            }
-            if sid not in self.db["FLUX"]: self.db["FLUX"][sid] = []
-            self.db["FLUX"][sid].append(payload)
-            self.db["HISTORY"].add(sig_hash)
-            return True
-        return False
-
-    def add_comment(self, msg_id, comment_text):
-        if msg_id not in self.db["COMMENTS"]:
-            self.db["COMMENTS"][msg_id] = []
-        self.db["COMMENTS"][msg_id].append({
-            "text": comment_text,
-            "ts": datetime.datetime.now().strftime("%H:%M")
-        })
-
-# =====================================================
-# DESIGN : INTERFACE SOUVERAINE ÉPURÉE
-# =====================================================
-class KongossaUI:
-    @staticmethod
-    def apply_styles():
-        st.markdown("""
-            <style>
-            @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600;900&display=swap');
-            * { font-family: 'Outfit', sans-serif; }
-            .stApp { background: #000; color: white; }
-            
-            /* Titre du Signal (Style Facebook/Journal) */
-            .signal-title {
-                color: #00FFAA; font-weight: 900; font-size: 1.1em;
-                margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;
-            }
-            
-            .signal-card {
-                background: #0f0f0f; border-radius: 15px;
-                padding: 15px; margin-bottom: 25px;
-                border: 1px solid #1a1a1a; position: relative;
-            }
-            
-            /* Micro-Reactions Angle Gauche */
-            .mini-react-bar {
-                position: absolute; bottom: -8px; left: 12px;
-                display: flex; gap: 3px; background: #00ffaa;
-                padding: 1px 6px; border-radius: 10px; z-index: 5;
-            }
-            .mini-react-item { color: #000; font-size: 0.7em; font-weight: bold; }
-            
-            /* Zone Commentaire Style Fil de Discussion */
-            .comment-bubble {
-                background: #1a1a1a; border-radius: 10px;
-                padding: 8px; margin: 5px 0; font-size: 0.85em;
-                border-left: 2px solid #00FFAA;
-            }
-            </style>
-        """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600;900&display=swap');
+    * { font-family: 'Outfit', sans-serif; }
+    .stApp { background: #000; color: white; }
+    
+    /* Carte de signal style "Fil d'actualité" */
+    .card {
+        background: #0d0d0d;
+        padding: 20px;
+        border-radius: 18px;
+        margin-bottom: 25px;
+        border: 1px solid #1f1f1f;
+        position: relative;
+    }
+    .title-banner {
+        color: #00ffaa;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        font-size: 1.1em;
+        margin-bottom: 10px;
+        border-bottom: 1px solid #00ffaa33;
+        padding-bottom: 5px;
+    }
+    
+    /* Réactions discrètes dans l'angle */
+    .reaction-pill-box {
+        position: absolute;
+        bottom: -12px;
+        left: 15px;
+        display: flex;
+        gap: 4px;
+        background: #00ffaa;
+        padding: 2px 8px;
+        border-radius: 20px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
+    .pill-item { color: black; font-size: 0.75em; font-weight: bold; }
+    
+    /* Miroir pour la caméra */
+    [data-testid="stCameraInput"] > div {
+        transform: scaleX(-1);
+        border: 2px solid #00ffaa !important;
+        border-radius: 15px;
+    }
+    
+    .comment-bubble {
+        background: #1a1a1a;
+        padding: 8px 12px;
+        border-radius: 12px;
+        margin: 6px 0;
+        font-size: 0.9em;
+        border-left: 3px solid #00ffaa;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # =====================================================
-# EXÉCUTION
+# MÉMOIRE SERVEUR (CACHE)
 # =====================================================
-tst = TSTEngine()
-KongossaUI.apply_styles()
+@st.cache_resource
+def server():
+    return {
+        "ROOMS": {},
+        "REACTIONS": {},
+        "COMMENTS": {},
+        "PRESENCE": {}
+    }
 
-if "auth" not in st.session_state: st.session_state.auth = False
+DB = server()
 
-st.markdown('<h2 style="text-align:center; color:#00FFAA; margin-bottom:0;">🇬🇦 GEN Z GABON</h2>', unsafe_allow_html=True)
-st.markdown('<p style="text-align:center; font-size:0.7em; letter-spacing:3px; opacity:0.6;">FREE-KONGOSSA : SYSTÈME DÉCENTRALISÉ</p>', unsafe_allow_html=True)
+# =====================================================
+# CŒUR LOGIQUE (POO)
+# =====================================================
+class KongossaCore:
+    def login(self, key):
+        return hashlib.sha256(key.encode()).hexdigest()[:12]
 
-if not st.session_state.auth:
-    key = st.text_input("🔑 ACCÈS AU TUNNEL", type="password").strip().upper()
-    if st.button("AUTHENTIFICATION", use_container_width=True):
-        if key:
-            st.session_state.sid = tst.derive_id(key)
-            st.session_state.auth = True
+    def post(self, sid, data, name, mtype, is_txt, title):
+        key = Fernet.generate_key()
+        enc = Fernet(key).encrypt(data)
+        L = len(enc)
+        msg_id = hashlib.md5(enc).hexdigest()
+        
+        msg = {
+            "id": msg_id,
+            "k": key,
+            "frags": [enc[:L//3], enc[L//3:2*L//3], enc[2*L//3:]],
+            "title": title,
+            "type": mtype,
+            "ts": time.time(),
+            "is_txt": is_txt
+        }
+        DB["ROOMS"].setdefault(sid, []).append(msg)
+
+    def cleanup(self, sid):
+        now = time.time()
+        if sid in DB["ROOMS"]:
+            DB["ROOMS"][sid] = [m for m in DB["ROOMS"][sid] if now - m["ts"] < 3600]
+
+core = KongossaCore()
+
+# =====================================================
+# INTERFACE UTILISATEUR
+# =====================================================
+st.markdown('<h1 style="text-align:center; color:#00ffaa;">🇬🇦 GEN Z GABON</h1>', unsafe_allow_html=True)
+st.caption("<center>SOUVERAINETÉ NUMÉRIQUE • FREE-KONGOSSA</center>", unsafe_allow_html=True)
+
+if "sid" not in st.session_state:
+    with st.container():
+        st.write("---")
+        key = st.text_input("🔑 Entrez la clé souveraine", type="password")
+        if st.button("ACTIVER LE TUNNEL", use_container_width=True) and key:
+            st.session_state.sid = core.login(key.upper())
+            st.session_state.token = random.randint(1000, 9999)
             st.rerun()
 else:
     sid = st.session_state.sid
-    
-    # 🔄 Bouton Refresh Manuel (Évite de faire ramer)
-    if st.button("🔄 Actualiser le Flux"): st.rerun()
+    core.cleanup(sid)
 
-    # --- FIL DES SIGNAUX ---
-    signals = tst.db["FLUX"].get(sid, [])
-    for p in reversed(signals): # Plus récent en haut pour le style "Fil d'actualité"
-        with st.container():
-            st.markdown('<div class="signal-card">', unsafe_allow_html=True)
-            try:
-                # Affichage du Titre de la publication
-                if p.get("title"):
-                    st.markdown(f'<div class="signal-title">{p["title"]}</div>', unsafe_allow_html=True)
-                
-                raw = Fernet(p["k"]).decrypt(b"".join(p["frags"]))
-                
-                if p["is_txt"]: st.write(raw.decode())
-                else:
-                    if "image" in p["type"]: st.image(raw, use_container_width=True)
-                    elif "video" in p["type"]: st.video(raw)
-                    elif "audio" in p["type"]: st.audio(raw)
-
-                # Réactions discrètes
-                reacts = tst.db.get("REACTIONS", {}).get(p['id'], [])
-                if reacts:
-                    st.markdown(f'<div class="mini-react-bar">{"".join([f"<span class=\'mini-react-item\'>{e}</span>" for e in reacts[:5]])}</div>', unsafe_allow_html=True)
-                
-                # --- ACTIONS (Réagir & Commenter) ---
-                st.markdown("<br>", unsafe_allow_html=True)
-                c1, c2, c3, c4, c5, _ = st.columns([1,1,1,1,1,4])
-                for i, e in enumerate(["❤️", "😂", "🔥", "✊", "😮"]):
-                    if c1.button(e, key=f"re_{p['id']}_{i}") if i==0 else c2.button(e, key=f"re_{p['id']}_{i}") if i==1 else c3.button(e, key=f"re_{p['id']}_{i}") if i==2 else c4.button(e, key=f"re_{p['id']}_{i}") if i==3 else c5.button(e, key=f"re_{p['id']}_{i}"):
-                        tst.db.setdefault("REACTIONS", {}).setdefault(p['id'], []).append(e)
-                        st.rerun()
-
-                # --- ONGLET COMMENTAIRES ---
-                with st.expander(f"💬 Discussions ({len(tst.db['COMMENTS'].get(p['id'], []))})"):
-                    # Affichage des commentaires existants
-                    for comm in tst.db["COMMENTS"].get(p['id'], []):
-                        st.markdown(f'<div class="comment-bubble"><b>{comm["ts"]}</b> : {comm["text"]}</div>', unsafe_allow_html=True)
-                    
-                    # Nouveau commentaire
-                    new_comm = st.text_input("Votre avis...", key=f"in_comm_{p['id']}")
-                    if st.button("Commenter", key=f"btn_comm_{p['id']}"):
-                        if new_comm:
-                            tst.add_comment(p['id'], new_comm)
-                            st.rerun()
-
-            except: st.error("Signal TST expiré ou corrompu")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # --- ZONE DE CRÉATION (MODE STUDIO) ---
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    with st.expander("➕ ÉMETTRE UN NOUVEAU SIGNAL", expanded=True):
-        # Onglet Titre (Point demandé)
-        post_title = st.text_input("Titre du Signal (Optionnel)", placeholder="Ex: Alerte Kongossa...")
+    # --- FEED (FIL D'ACTUALITÉ) ---
+    for p in reversed(DB["ROOMS"].get(sid, [])):
+        st.markdown('<div class="card">', unsafe_allow_html=True)
         
-        mode = st.tabs(["💬 Texte", "📸 Photo/Vidéo", "🎙️ Vocal"])
-        
-        with mode[0]:
-            txt = st.text_area("Contenu du message")
-            if st.button("Diffuser Texte"):
-                tst.broadcast(sid, txt.encode(), "txt", "text", True, title=post_title)
-                st.rerun()
-        
-        with mode[1]:
-            media_choice = st.radio("Source", ["Appareil Photo (Miroir)", "Fichier Vidéo"])
-            if "Photo" in media_choice:
-                cam = st.camera_input("Capture")
-                if cam:
-                    tst.broadcast(sid, cam.getvalue(), "shot.jpg", "image/jpeg", False, title=post_title)
-                    st.rerun()
+        if p["title"]:
+            st.markdown(f'<div class="title-banner">{p["title"]}</div>', unsafe_allow_html=True)
+
+        try:
+            raw = Fernet(p["k"]).decrypt(b"".join(p["frags"]))
+            if p["is_txt"]:
+                st.markdown(f"### {raw.decode()}")
             else:
-                vid = st.file_uploader("Fichier MP4/MOV", type=["mp4", "mov"])
-                if vid and st.button("Diffuser Vidéo"):
-                    tst.broadcast(sid, vid.getvalue(), vid.name, vid.type, False, title=post_title)
-                    st.rerun()
-        
-        with mode[2]:
-            vox = st.audio_input("Microphone")
-            if vox:
-                tst.broadcast(sid, vox.getvalue(), "vocal.wav", "audio/wav", False, title=post_title)
+                if "image" in p["type"]: st.image(raw, use_container_width=True)
+                elif "audio" in p["type"]: st.audio(raw)
+                elif "video" in p["type"]: st.video(raw)
+        except:
+            st.error("Signal TST corrompu")
+
+        # Micro-Réactions (Pills)
+        reacts = DB["REACTIONS"].get(p["id"], [])
+        if reacts:
+            unique_reacts = "".join(list(set(reacts))[:5])
+            st.markdown(f'<div class="reaction-pill-box"><span class="pill-item">{unique_reacts} {len(reacts)}</span></div>', unsafe_allow_html=True)
+
+        # Barre d'action horizontale
+        st.markdown("<br>", unsafe_allow_html=True)
+        cols = st.columns(6)
+        emojis = ["❤️", "😂", "🔥", "✊", "😮"]
+        for i, e in enumerate(emojis):
+            if cols[i].button(e, key=f"re_{p['id']}_{i}"):
+                DB["REACTIONS"].setdefault(p["id"], []).append(e)
                 st.rerun()
 
-    if st.button("🧨 QUITTER LE TUNNEL", use_container_width=True):
-        st.session_state.auth = False
+        # Système de commentaires
+        with st.expander(f"💬 Discussions ({len(DB['COMMENTS'].get(p['id'], []))})"):
+            for c in DB["COMMENTS"].get(p["id"], []):
+                st.markdown(f'<div class="comment-bubble"><b>{c["ts"]}</b> : {c["t"]}</div>', unsafe_allow_html=True)
+            
+            c_input = st.text_input("Ajouter un avis...", key=f"in_{p['id']}")
+            if st.button("Envoyer", key=f"btn_{p['id']}"):
+                DB["COMMENTS"].setdefault(p["id"], []).append({
+                    "t": c_input, "ts": datetime.datetime.now().strftime("%H:%M")
+                })
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- ZONE DE CRÉATION ---
+    st.write("---")
+    st.subheader("➕ Émettre un Signal")
+    new_title = st.text_input("Thème du signal (Titre Facebook style)")
+    
+    t1, t2, t3 = st.tabs(["💬 Texte", "📸 Caméra", "🎙️ Vocal"])
+    
+    with t1:
+        txt = st.text_area("Votre message...")
+        if st.button("Diffuser Texte", use_container_width=True):
+            core.post(sid, txt.encode(), "txt", "text", True, new_title)
+            st.rerun()
+    with t2:
+        cam = st.camera_input("Prise de vue miroir")
+        if cam:
+            core.post(sid, cam.getvalue(), "img.jpg", "image/jpeg", False, new_title)
+            st.rerun()
+    with t3:
+        vox = st.audio_input("Enregistrement vocal")
+        if vox:
+            core.post(sid, vox.getvalue(), "vocal.wav", "audio/wav", False, new_title)
+            st.rerun()
+
+    if st.button("🧨 QUITTER LE TUNNEL"):
+        del st.session_state.sid
         st.rerun()
+
+    # Boucle de rafraîchissement intelligente
+    time.sleep(10)
+    st.rerun()

@@ -6,152 +6,180 @@ import time
 import random
 
 # =====================================================
-# SYSTÈME DE PRÉSENCE ET FLUX
+# SYSTÈME DE GESTION (RAM & ÉPHÉMÈRE)
 # =====================================================
-if "user_id" not in st.session_state:
-    st.session_state.user_id = f"USER-{random.randint(100, 999)}"
-
 @st.cache_resource
-def initialiser_systeme():
-    return {
-        "FLUX": {},
-        "PRESENCE": {} # Stocke l'heure de dernière activité par ID_SESSION
-    }
+def init_vault():
+    # FLUX stocke les messages, PRESENCE les utilisateurs en ligne
+    return {"FLUX": {}, "PRESENCE": {}}
 
-SYSTEME = initialiser_systeme()
+VAULT = init_vault()
 
-def generer_id(code_base):
-    if not code_base: return None
-    grain = datetime.datetime.now().strftime("%Y-%m-%d-%H")
-    return hashlib.sha256(f"{code_base}-{grain}".encode()).hexdigest()[:10].upper()
+def secure_id(key):
+    if not key: return None
+    # L'identifiant change toutes les heures pour rompre le traçage
+    h = f"{key}-{datetime.datetime.now().strftime('%Y-%m-%d-%H')}"
+    return hashlib.sha256(h.encode()).hexdigest()[:12].upper()
 
 # =====================================================
-# INTERFACE "INSTA-FUTUR" (CSS AVANCÉ)
+# DESIGN FUTURISTE GABONAIS (CSS)
 # =====================================================
-st.set_page_config(page_title="FREE-KONGOSSA", page_icon="✊", layout="centered")
+st.set_page_config(page_title="GEN-Z GABON", page_icon="🇬🇦", layout="centered")
 
 st.markdown("""
     <style>
-    /* Fond dégradé animé */
-    .stApp {
-        background: radial-gradient(circle at top right, #1e2a44, #0e1117);
-    }
-    
-    /* Indicateur de présence */
-    .presence-dot {
-        height: 12px; width: 12px; background-color: #00ffa0;
-        border-radius: 50%; display: inline-block;
-        box-shadow: 0 0 10px #00ffa0; margin-right: 10px;
-    }
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;600;900&display=swap');
+    * { font-family: 'Outfit', sans-serif; }
+    .stApp { background: radial-gradient(circle at top, #0f2027, #203a43, #2c5364); }
     
     /* Cartes Glassmorphism */
-    .glass-card {
+    .post-card {
         background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        border-radius: 20px;
+        backdrop-filter: blur(15px);
+        border-radius: 25px;
         padding: 20px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
         margin-bottom: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
     }
     
-    /* Suppression des éléments Streamlit lourds */
-    header, footer {visibility: hidden;}
-    .stChatInput { border-radius: 30px !important; }
+    /* Timer de destruction */
+    .timer-badge {
+        background: linear-gradient(90deg, #ff4b2b, #ff416c);
+        color: white; padding: 4px 12px; border-radius: 20px;
+        font-size: 0.7em; font-weight: bold; float: right;
+    }
+    
+    .online-indicator {
+        color: #00ffaa; font-size: 0.8em; font-weight: bold;
+        text-shadow: 0 0 10px #00ffaa;
+    }
+    
+    .app-header {
+        text-align: center; font-weight: 900; font-size: 3em;
+        background: linear-gradient(to right, #00ffaa, #00d4ff);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        margin-bottom: 0px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# LOGIQUE DE CONNEXION
+# INTERFACE D'ACCÈS
 # =====================================================
-st.title("✊ FREE-KONGOSSA")
-code_racine = st.text_input("🔑 CLÉ QUANTIQUE", type="password", placeholder="Votre secret...").strip().upper()
-id_session = generer_id(code_racine)
+st.markdown('<h1 class="app-header">GEN-Z GABON</h1>', unsafe_allow_html=True)
+st.caption("<center>Souveraineté. Éphémérité. Liberté.</center>", unsafe_allow_html=True)
 
-if id_session:
-    # Mise à jour de la présence
-    SYSTEME["PRESENCE"][f"{id_session}-{st.session_state.user_id}"] = time.time()
+secret_key = st.text_input("🔑 CLÉ DU TUNNEL", type="password", placeholder="Secret partagé...").strip().upper()
+session_id = secure_id(secret_key)
+
+if session_id:
+    # Présence temps réel
+    if "u_token" not in st.session_state: st.session_state.u_token = random.randint(100, 999)
+    current_time = time.time()
+    VAULT["PRESENCE"][f"{session_id}-{st.session_state.u_token}"] = current_time
     
-    if id_session not in SYSTEME["FLUX"]: SYSTEME["FLUX"][id_session] = []
+    if session_id not in VAULT["FLUX"]: VAULT["FLUX"][session_id] = []
 
-    # --- BARRE D'ÉTAT (Présence de la sœur) ---
-    # On regarde si un autre utilisateur est actif sur cet ID depuis moins de 30s
-    autres_actifs = [uid for uid, t in SYSTEME["PRESENCE"].items() 
-                     if uid.startswith(id_session) and uid != f"{id_session}-{st.session_state.user_id}" 
-                     and (time.time() - t) < 30]
+    # Vérification présence de l'autre
+    peers = [k for k, v in VAULT["PRESENCE"].items() if k.startswith(session_id) and (current_time - v) < 20]
+    if len(peers) > 1:
+        st.markdown('<p class="online-indicator">🟢 SIGNAL ACTIF : TA SŒUR EST DANS LE TUNNEL</p>', unsafe_allow_html=True)
+
+    # =====================================================
+    # CRÉATION MULTIMÉDIA (CAPTURE LIVE)
+    # =====================================================
+    st.markdown("### ⚡ Diffuser un signal")
+    tabs = st.tabs(["💬 Texte", "📷 Caméra", "🎙️ Micro", "📂 Fichier"])
     
-    if autres_actifs:
-        st.markdown(f'<div><span class="presence-dot"></span><b>Signal détecté : Ta sœur est en ligne</b></div>', unsafe_allow_html=True)
-    else:
-        st.caption("☁️ Seul dans le tunnel (en attente du signal distant...)")
+    content, name, m_type, is_txt = None, "", "", False
 
+    with tabs[0]:
+        msg = st.chat_input("Un Kongossa ?")
+        if msg: content, name, m_type, is_txt = msg.encode(), "txt", "text", True
+
+    with tabs[1]:
+        photo = st.camera_input("Capture instantanée")
+        if photo: content, name, m_type = photo.getvalue(), "live.jpg", "image/jpeg"
+
+    with tabs[2]:
+        vocal = st.audio_input("Mémo vocal souverain")
+        if vocal: content, name, m_type = vocal.getvalue(), "vocal.wav", "audio/wav"
+
+    with tabs[3]:
+        doc = st.file_uploader("Tout document", type=None)
+        if doc: content, name, m_type = doc.getvalue(), doc.name, doc.type
+
+    if content:
+        # Sécurisation Triadique
+        key = Fernet.generate_key()
+        f = Fernet(key)
+        encrypted_data = f.encrypt(content)
+        size = len(encrypted_data)
+        
+        VAULT["FLUX"][session_id].append({
+            "f1": encrypted_data[:size//3], 
+            "f2": encrypted_data[size//3:2*size//3], 
+            "f3": encrypted_data[2*size//3:],
+            "k": key, "name": name, "type": m_type, "is_txt": is_txt,
+            "timestamp": time.time(), # Pour le compte à rebours
+            "expiry": 3600 # Durée de vie : 1 heure (3600 sec)
+        })
+        st.balloons()
+        st.rerun()
+
+    # =====================================================
+    # FLUX DYNAMIQUE & AUTO-DESTRUCT
+    # =====================================================
     st.markdown("---")
-
-    # --- FIL D'ACTUALITÉ DYNAMIQUE ---
-    placeholder = st.empty()
-    with placeholder.container():
-        posts = SYSTEME["FLUX"][id_session]
-        for i, p in enumerate(reversed(posts)):
-            with st.container():
-                # Design Glassmorphism pour chaque post
-                st.markdown(f'<div class="glass-card">', unsafe_allow_html=True)
-                st.caption(f"⏱️ {p['time']}")
+    st.subheader("🌐 Tunnel Temporel")
+    
+    feed = st.empty()
+    with feed.container():
+        # Filtrage des messages expirés
+        active_posts = [p for p in VAULT["FLUX"][session_id] if (time.time() - p["timestamp"]) < p["expiry"]]
+        VAULT["FLUX"][session_id] = active_posts # Nettoyage mémoire
+        
+        if not active_posts:
+            st.info("Le tunnel est vide. Les messages précédents ont été désintégrés.")
+        else:
+            for i, p in enumerate(reversed(active_posts)):
+                # Calcul du temps restant
+                temps_restant = int(p["expiry"] - (time.time() - p["timestamp"]))
+                minutes = temps_restant // 60
+                
+                st.markdown(f'''
+                    <div class="post-card">
+                        <span class="timer-badge">⏳ AUTO-DESTRUCT : {minutes}m</span>
+                        <p style="font-size:0.8em; opacity:0.6;">Signal émis à {datetime.datetime.fromtimestamp(p["timestamp"]).strftime("%H:%M")}</p>
+                ''', unsafe_allow_html=True)
                 
                 try:
-                    data = Fernet(p["key"]).decrypt(p["frag"][0]+p["frag"][1]+p["frag"][2])
-                    if p["text"]:
-                        st.markdown(f"### {data.decode()}")
+                    # Reconstruction
+                    decrypted = Fernet(p["k"]).decrypt(p["f1"] + p["f2"] + p["f3"])
+                    
+                    if p["is_txt"]:
+                        st.markdown(f"### {decrypted.decode()}")
                     else:
-                        st.write(f"📁 **{p['name']}**")
-                        if "image" in p["type"]: st.image(data)
-                        elif "video" in p["type"]: st.video(data)
-                        elif "audio" in p["type"] or p["name"].endswith(('.aac', '.m4a')):
-                            st.audio(data)
-                        st.download_button("💾 Récupérer", data, file_name=p["name"], key=f"dl_{i}")
+                        st.write(f"📎 {p['name']}")
+                        if "image" in p["type"]: st.image(decrypted)
+                        elif "video" in p["type"]: st.video(decrypted)
+                        elif "audio" in p["type"] or p["name"].endswith(('.aac', '.m4a', '.wav')):
+                            st.audio(decrypted)
+                        st.download_button("💾 Aspirer", decrypted, file_name=p["name"], key=f"dl_{i}")
                 except:
-                    st.error("Signal corrompu.")
+                    st.error("Rupture de signal.")
+                
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- ZONE DE CRÉATION RAPIDE ---
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    with st.expander("✨ PARTAGER UNE STORY", expanded=False):
-        mode = st.tabs(["💬 Texte", "📸 Média"])
-        
-        with mode[0]:
-            msg = st.chat_input("Écris ton secret...")
-            if msg:
-                cle = Fernet.generate_key()
-                chiffre = Fernet(cle).encrypt(msg.encode())
-                t = len(chiffre)
-                SYSTEME["FLUX"][id_session].append({
-                    "frag": (chiffre[:t//3], chiffre[t//3:2*t//3], chiffre[2*t//3:]),
-                    "key": cle, "name": "Msg.txt", "type": "text/plain", "text": True,
-                    "time": datetime.datetime.now().strftime("%H:%M")
-                })
-                st.rerun()
-        
-        with mode[1]:
-            f = st.file_uploader("Prends une photo/vidéo ou charge un audio", type=None)
-            if f and st.button("🚀 Diffuser le média"):
-                cle = Fernet.generate_key()
-                chiffre = Fernet(cle).encrypt(f.getvalue())
-                t = len(chiffre)
-                SYSTEME["FLUX"][id_session].append({
-                    "frag": (chiffre[:t//3], chiffre[t//3:2*t//3], chiffre[2*t//3:]),
-                    "key": cle, "name": f.name, "type": f.type, "text": False,
-                    "time": datetime.datetime.now().strftime("%H:%M")
-                })
-                st.balloons()
-                st.rerun()
-
-    # Rafraîchissement automatique toutes les 7 secondes
-    time.sleep(7)
+    # Rafraîchissement automatique toutes les 10 secondes
+    time.sleep(10)
     st.rerun()
 
 else:
-    # Écran de veille futuriste
     st.markdown("""
-    <div style="text-align: center; margin-top: 100px;">
-        <h1 style="font-size: 3em; color: #00ffa0;">SOUVERAINETÉ</h1>
-        <p style="font-size: 1.5em; opacity: 0.6;">Le tunnel est scellé. Entrez la clé pour manifester le flux.</p>
+    <div style="text-align: center; margin-top: 100px; color: #00ffaa; opacity: 0.7;">
+        <h3>En attente de la clé de déchiffrement...</h3>
+        <p>Tunnel sécurisé par protocole Triadique.</p>
     </div>
     """, unsafe_allow_html=True)

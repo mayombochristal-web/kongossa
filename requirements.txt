@@ -1,6 +1,2 @@
 streamlit
-websocket-client
-websockets
-uuid
-
-pip install -r requirements.txt
+cryptography

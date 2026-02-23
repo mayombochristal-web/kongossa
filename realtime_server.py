@@ -1,126 +1,52 @@
-# ==========================================================
-# FREE-KONGOSSA REALTIME SERVER v1
-# TTU-MC3 / TST Synchronisation Engine
-# ==========================================================
-
 import asyncio
 import websockets
 import json
-import time
+import os
 
-# tunnels actifs
+# Stockage des tunnels
 tunnels = {}
 
-# statistiques
-stats = {
-    "users": 0,
-    "messages": 0
-}
-
-
-# ----------------------------------------------------------
-# Broadcast sécurisé
-# ----------------------------------------------------------
 async def broadcast(tunnel, payload, sender=None):
-
-    if tunnel not in tunnels:
-        return
-
-    dead = set()
-
+    if tunnel not in tunnels: return
+    dead_links = set()
     for client in tunnels[tunnel]:
         try:
             if client != sender:
-                await client.send(payload)
+                await client.send(json.dumps(payload))
         except:
-            dead.add(client)
+            dead_links.add(client)
+    for dead in dead_links:
+        tunnels[tunnel].discard(dead)
 
-    # nettoyage connexions mortes
-    for d in dead:
-        tunnels[tunnel].discard(d)
-
-
-# ----------------------------------------------------------
-# Handler principal
-# ----------------------------------------------------------
 async def handler(ws):
-
-    tunnel = None
-
-    stats["users"] += 1
-
+    tunnel_id = None
     try:
         async for message in ws:
-
             data = json.loads(message)
-
-            # ================= JOIN =================
+            
             if data["type"] == "join":
+                tunnel_id = data["tunnel"]
+                if tunnel_id not in tunnels:
+                    tunnels[tunnel_id] = set()
+                tunnels[tunnel_id].add(ws)
+                await broadcast(tunnel_id, {"type": "presence", "count": len(tunnels[tunnel_id])})
+                print(f"User joined tunnel {tunnel_id}")
 
-                tunnel = data["tunnel"]
-
-                if tunnel not in tunnels:
-                    tunnels[tunnel] = set()
-
-                tunnels[tunnel].add(ws)
-
-                await broadcast(
-                    tunnel,
-                    json.dumps({
-                        "type": "presence",
-                        "count": len(tunnels[tunnel])
-                    })
-                )
-
-            # ================= MESSAGE =================
             elif data["type"] == "message":
-
-                stats["messages"] += 1
-
-                data["server_ts"] = time.time()
-
-                await broadcast(
-                    tunnel,
-                    json.dumps(data),
-                    sender=ws
-                )
+                await broadcast(tunnel_id, data, sender=ws)
 
     except Exception as e:
-        print("Client error:", e)
-
+        print(f"Error: {e}")
     finally:
+        if tunnel_id and tunnel_id in tunnels:
+            tunnels[tunnel_id].discard(ws)
+            await broadcast(tunnel_id, {"type": "presence", "count": len(tunnels[tunnel_id])})
 
-        stats["users"] -= 1
-
-        if tunnel and ws in tunnels.get(tunnel, set()):
-            tunnels[tunnel].remove(ws)
-
-            await broadcast(
-                tunnel,
-                json.dumps({
-                    "type": "presence",
-                    "count": len(tunnels[tunnel])
-                })
-            )
-
-
-# ----------------------------------------------------------
-# Lancement serveur
-# ----------------------------------------------------------
 async def main():
-
-    print("🚀 FREE-KONGOSSA REALTIME ONLINE")
-
-    async with websockets.serve(
-        handler,
-        "0.0.0.0",
-        8765,
-        ping_interval=20,
-        ping_timeout=20,
-        max_size=10_000_000
-    ):
+    port = int(os.environ.get("PORT", 8765))
+    print(f"🚀 Serveur Kongossa actif sur le port {port}")
+    async with websockets.serve(handler, "0.0.0.0", port, ping_interval=20, ping_timeout=20):
         await asyncio.Future()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

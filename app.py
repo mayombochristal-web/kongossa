@@ -14,8 +14,8 @@ from streamlit_mic_recorder import mic_recorder
 # =====================================================
 st.set_page_config(page_title="Free_Kogossa", layout="wide")
 
-url = st.secrets["supabase"]["url"]
-key = st.secrets["supabase"]["key"]
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 DATA_FOLDER = "data"

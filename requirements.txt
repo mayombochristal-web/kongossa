@@ -1,1 +1,8 @@
-streamlit==1.37.0
+streamlit>=1.34.0
+supabase
+pandas
+numpy
+plotly
+streamlit-autorefresh
+streamlit-mic-recorder
+websockets

@@ -964,8 +964,13 @@ def marketplace():
 # ADMIN PANEL
 # =====================================================
 def admin_panel():
-    admin_email_hash = hashlib.sha256("mayombochristal@gmail.com".encode()).hexdigest()
-    admin_pass_hash = hashlib.sha256("Broozy040200".encode()).hexdigest()
+    # On récupère les hachages depuis les secrets Streamlit
+    try:
+        admin_email_hash = st.secrets["admin"]["email_hash"]
+        admin_pass_hash = st.secrets["admin"]["password_hash"]
+    except KeyError:
+        st.error("Configuration admin manquante dans les secrets.")
+        return
 
     if st.session_state.user != "SCARABBE":
         st.error("⚠️ Accès restreint.")

@@ -142,11 +142,11 @@ def activate_plan(username, plan_type, duration_days=30):
     supabase.table("tst_params").update(params).eq("username", clean_name).execute()
 
 def credit_creator(amount):
-    return update_wallet("SCARABBE", amount, "add")
+    return update_wallet("SCARABÉE", amount, "add")
 
 def ensure_scarabbe_wallet():
-    if st.session_state.user == "SCARABBE":
-        clean_name = "SCARABBE"
+    if st.session_state.user == "SCARABÉE":
+        clean_name = "SCARABÉE"
         try:
             wallet = supabase.table("wallets").select("kongo_balance").eq("username", clean_name).execute()
             if not wallet.data:
@@ -1116,11 +1116,11 @@ def about():
         if os.path.exists(creator_pic):
             st.image(creator_pic, use_container_width=True)
         else:
-            st.info("Photo de SCARABBE")
+            st.info("Photo de SCARABÉE")
 
     with col2:
         st.markdown("""
-        ### **SCARABBE** *Fondateur de Free_Kogossa & Chercheur*
+        ### **SCARABÉE** *Fondateur de Free_Kogossa & Chercheur*
 
         Free_Kogossa est le premier réseau social piloté par la **Théorie Spectrale Triadique (TST)**.
         """)

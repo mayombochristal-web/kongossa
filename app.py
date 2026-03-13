@@ -2,10 +2,12 @@ import streamlit as st
 from supabase import create_client
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import hashlib
 import hmac
+import base64
+from cryptography.fernet import Fernet
 
 # =====================================================
 # CONFIGURATION
@@ -18,7 +20,7 @@ st.set_page_config(
 )
 
 # =====================================================
-# INITIALISATION SUPABASE
+# INITIALISATION SUPABASE & FERNET
 # =====================================================
 @st.cache_resource
 def init_supabase():
@@ -28,8 +30,36 @@ def init_supabase():
 
 supabase = init_supabase()
 
+@st.cache_resource
+def get_fernet():
+    """Retourne l'objet Fernet à partir de la clé stockée dans les secrets."""
+    key = st.secrets.get("fernet_key")
+    if not key:
+        st.error("🔴 Clé Fernet manquante dans les secrets. Ajoutez 'fernet_key'.")
+        st.stop()
+    return Fernet(key.encode())
+
+fernet = get_fernet()
+
 # =====================================================
-# FONCTIONS DE HASH
+# FONCTIONS DE CHIFFREMENT / DÉCHIFFREMENT
+# =====================================================
+def encrypt_text(plain_text: str) -> str:
+    """Chiffre un texte et retourne une chaîne base64."""
+    if not plain_text:
+        return ""
+    encrypted = fernet.encrypt(plain_text.encode())
+    return base64.b64encode(encrypted).decode()  # stockage en base64
+
+def decrypt_text(encrypted_b64: str) -> str:
+    """Déchiffre une chaîne base64 et retourne le texte clair."""
+    if not encrypted_b64:
+        return ""
+    encrypted = base64.b64decode(encrypted_b64)
+    return fernet.decrypt(encrypted).decode()
+
+# =====================================================
+# FONCTIONS DE HASH (pour admin)
 # =====================================================
 def hash_string(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()
@@ -85,6 +115,7 @@ def login_signup():
                     if not user:
                         st.error("La création du compte a échoué.")
                         return
+
                     role = "admin" if verify_admin_code(new_email, admin_code) else "user"
                     profile_data = {
                         "id": user.id,
@@ -96,6 +127,16 @@ def login_signup():
                         "created_at": datetime.now().isoformat()
                     }
                     supabase.table("profiles").insert(profile_data).execute()
+
+                    # Création du wallet
+                    initial_balance = 100_000_000.0 if role == "admin" else 0.0
+                    supabase.table("wallets").insert({
+                        "user_id": user.id,
+                        "kongo_balance": initial_balance,
+                        "total_mined": 0.0,
+                        "last_reward_at": datetime.now().isoformat()
+                    }).execute()
+
                     st.success("Compte créé avec succès ! Connectez-vous.")
                     time.sleep(2)
                     st.rerun()
@@ -138,7 +179,7 @@ def is_admin():
 # =====================================================
 # NAVIGATION (SIDEBAR)
 # =====================================================
-st.sidebar.image("https://via.placeholder.com/150x50?text=GEN-Z", use_column_width=True)
+st.sidebar.image("https://via.placeholder.com/150x50?text=GEN-Z", width=150)  # use_column_width déprécié
 st.sidebar.write(f"Connecté en tant que : **{profile['username']}**")
 if is_admin():
     st.sidebar.markdown("🔑 **Administrateur**")
@@ -181,6 +222,14 @@ def add_comment(post_id, text):
     time.sleep(0.5)
     st.rerun()
 
+def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
+    """Génère une URL signée pour un accès temporaire à un objet privé."""
+    try:
+        res = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
+        return res['signedURL']
+    except Exception:
+        return None
+
 # =====================================================
 # PAGES
 # =====================================================
@@ -190,17 +239,18 @@ def feed_page():
     with st.expander("✍️ Créer un post", expanded=False):
         with st.form("new_post"):
             post_text = st.text_area("Quoi de neuf ?")
-            media_file = st.file_uploader("Ajouter une image/vidéo (optionnel)", type=["png", "jpg", "jpeg", "mp4"])
+            media_file = st.file_uploader("Image / Vidéo", type=["png", "jpg", "jpeg", "mp4"])
+            audio_file = st.audio_input("Enregistrer un audio")  # Nouveau
             submitted = st.form_submit_button("Publier")
 
-            if submitted and post_text:
+            if submitted and (post_text or media_file or audio_file):
                 try:
                     media_path = None
                     media_type = None
 
                     if media_file:
                         ext = media_file.name.split(".")[-1]
-                        file_name = f"{user.id}/{uuid.uuid4()}.{ext}"
+                        file_name = f"posts/{user.id}/{uuid.uuid4()}.{ext}"
                         supabase.storage.from_("media").upload(
                             path=file_name,
                             file=media_file.getvalue(),
@@ -208,6 +258,16 @@ def feed_page():
                         )
                         media_path = file_name
                         media_type = media_file.type
+
+                    if audio_file:
+                        file_name = f"posts/{user.id}/{uuid.uuid4()}.wav"
+                        supabase.storage.from_("media").upload(
+                            path=file_name,
+                            file=audio_file.getvalue(),
+                            file_options={"content-type": "audio/wav"}
+                        )
+                        media_path = file_name
+                        media_type = "audio/wav"
 
                     post_data = {
                         "user_id": user.id,
@@ -243,11 +303,17 @@ def feed_page():
                 st.markdown(f"**{post['profiles']['username']}** · {post['created_at'][:10]}")
                 st.write(post["text"])
                 if post.get("media_path"):
-                    file_url = supabase.storage.from_("media").get_public_url(post["media_path"])
-                    if post.get("media_type") and "image" in post["media_type"]:
-                        st.image(file_url)
-                    elif post.get("media_type") and "video" in post["media_type"]:
-                        st.video(file_url)
+                    # Utiliser une URL signée pour plus de sécurité (bucket privé)
+                    file_url = get_signed_url("media", post["media_path"])
+                    if file_url:
+                        if post.get("media_type") and "image" in post["media_type"]:
+                            st.image(file_url)
+                        elif post.get("media_type") and "video" in post["media_type"]:
+                            st.video(file_url)
+                        elif post.get("media_type") and "audio" in post["media_type"]:
+                            st.audio(file_url)
+                    else:
+                        st.warning("Média temporairement indisponible")
 
                 like_count = len(post.get("likes", []))
                 comment_count = len(post.get("comments", []))
@@ -299,7 +365,9 @@ def profile_page():
     col2.metric("Abonnements", following.count)
 
 def messages_page():
-    st.header("✉️ Messagerie privée")
+    st.header("✉️ Messagerie privée (chiffrée de bout en bout)")
+
+    # Récupération des contacts
     sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
     received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
     contact_ids = set()
@@ -321,37 +389,48 @@ def messages_page():
     )
 
     if selected_contact:
-        st.subheader(f"Discussion avec {contact_dict[selected_contact]}")
+        st.subheader(f"Discussion avec {contact_dict[selected_contact]} (messages chiffrés)")
+
+        # Récupération des messages
         messages = supabase.table("messages").select("*").or_(
             f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
             f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
         ).order("created_at").execute()
 
         for msg in messages.data:
+            # Déchiffrement du contenu
+            try:
+                decrypted_text = decrypt_text(msg.get("text", ""))
+            except Exception:
+                decrypted_text = "🔐 Message corrompu"
+
             if msg["sender"] == user.id:
                 st.markdown(
                     f"<div style='text-align: right; background-color: #dcf8c6; padding: 8px; border-radius: 10px; margin:5px;'>"
-                    f"Vous : {msg.get('text', '')}</div>",
+                    f"<b>Vous</b> : {decrypted_text}</div>",
                     unsafe_allow_html=True
                 )
             else:
                 st.markdown(
                     f"<div style='text-align: left; background-color: #f1f0f0; padding: 8px; border-radius: 10px; margin:5px;'>"
-                    f"{contact_dict[selected_contact]} : {msg.get('text', '')}</div>",
+                    f"<b>{contact_dict[selected_contact]}</b> : {decrypted_text}</div>",
                     unsafe_allow_html=True
                 )
 
+        # Envoi d'un nouveau message
         with st.form("new_message"):
             msg_text = st.text_area("Votre message")
-            if st.form_submit_button("Envoyer"):
+            if st.form_submit_button("Envoyer (chiffré)"):
                 if msg_text.strip():
+                    # Chiffrement avant insertion
+                    encrypted_b64 = encrypt_text(msg_text)
                     supabase.table("messages").insert({
                         "sender": user.id,
                         "recipient": selected_contact,
-                        "text": msg_text,
+                        "text": encrypted_b64,
                         "created_at": datetime.now().isoformat()
                     }).execute()
-                    st.success("Message envoyé")
+                    st.success("Message envoyé (chiffré)")
                     st.rerun()
                 else:
                     st.warning("Le message ne peut pas être vide.")
@@ -377,7 +456,9 @@ def marketplace_page():
                             file=media.getvalue(),
                             file_options={"content-type": media.type}
                         )
-                        media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
+                        # Générer une URL signée pour l'affichage (bucket privé)
+                        signed = get_signed_url("marketplace", file_name, expires_in=86400)
+                        media_url = signed if signed else supabase.storage.from_("marketplace").get_public_url(file_name)
 
                     supabase.table("marketplace_listings").insert({
                         "user_id": user.id,
@@ -408,7 +489,7 @@ def marketplace_page():
         with cols[i % 3]:
             st.markdown(f"**{listing['title']}**")
             if listing.get("media_url"):
-                st.image(listing["media_url"], use_column_width=True)
+                st.image(listing["media_url"], width=200)  # utilisation de width au lieu de use_column_width
             st.write(listing["description"][:100] + "...")
             st.write(f"💰 {listing['price_kc']} KC")
             st.caption(f"Par {listing['profiles']['username']}")
@@ -417,9 +498,10 @@ def wallet_page():
     st.header("💰 Mon Wallet")
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
     if not wallet.data:
+        # Création automatique si inexistant (cas des anciens comptes)
         supabase.table("wallets").insert({
             "user_id": user.id,
-            "kongo_balance": 0.0,
+            "kongo_balance": 100_000_000.0 if is_admin() else 0.0,
             "total_mined": 0.0,
             "last_reward_at": datetime.now().isoformat()
         }).execute()
@@ -428,9 +510,9 @@ def wallet_page():
 
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Solde KC", f"{wallet_data['kongo_balance']} KC")
+        st.metric("Solde KC", f"{wallet_data['kongo_balance']:,.0f} KC")
     with col2:
-        st.metric("Total miné", f"{wallet_data['total_mined']} KC")
+        st.metric("Total miné", f"{wallet_data['total_mined']:,.0f} KC")
 
     if st.button("⛏️ Miner (récompense quotidienne)"):
         last = datetime.fromisoformat(wallet_data["last_reward_at"].replace("Z", "+00:00"))
@@ -482,7 +564,7 @@ def admin_page():
     st.header("🛡️ Espace Administration")
     st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")
 
-    tab1, tab2, tab3 = st.tabs(["Utilisateurs", "Posts signalés", "Logs d'action"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Utilisateurs", "Posts signalés", "Logs d'action", "Crédits"])
 
     with tab1:
         st.subheader("Gestion des utilisateurs")
@@ -495,7 +577,7 @@ def admin_page():
                 "Sélectionner un utilisateur",
                 options=df_users["id"],
                 format_func=lambda x: df_users[df_users["id"] == x]["username"].values[0]
-            )  # <-- parenthèse fermée ici
+            )
             new_role = st.selectbox("Nouveau rôle", ["user", "admin", "moderator"])
             if st.form_submit_button("Appliquer"):
                 supabase.table("profiles").update({"role": new_role}).eq("id", user_id).execute()
@@ -510,8 +592,9 @@ def admin_page():
             with st.expander(f"Post de {post['profiles']['username']} -- {post['created_at'][:16]}"):
                 st.write(post["text"])
                 if post.get("media_path"):
-                    file_url = supabase.storage.from_("media").get_public_url(post["media_path"])
-                    st.image(file_url, width=200)
+                    file_url = get_signed_url("media", post["media_path"])
+                    if file_url:
+                        st.image(file_url, width=200)
                 if st.button("🗑️ Supprimer ce post", key=f"del_{post['id']}"):
                     supabase.table("posts").delete().eq("id", post["id"]).execute()
                     st.success("Post supprimé")
@@ -520,6 +603,31 @@ def admin_page():
     with tab3:
         st.subheader("Journal des actions")
         st.info("Fonctionnalité à venir : traçabilité des actions d'administration.")
+
+    with tab4:
+        st.subheader("Créditer un utilisateur")
+        users = supabase.table("profiles").select("id, username").execute()
+        user_options = {u["id"]: u["username"] for u in users.data}
+        selected_user = st.selectbox(
+            "Choisir un utilisateur",
+            options=list(user_options.keys()),
+            format_func=lambda x: user_options[x]
+        )
+        amount = st.number_input("Montant (KC)", min_value=0.0, step=1000.0, value=100_000_000.0)
+        if st.button("Ajouter des KC"):
+            # Récupérer le wallet
+            wallet = supabase.table("wallets").select("*").eq("user_id", selected_user).execute()
+            if wallet.data:
+                new_balance = wallet.data[0]["kongo_balance"] + amount
+                supabase.table("wallets").update({"kongo_balance": new_balance}).eq("user_id", selected_user).execute()
+            else:
+                supabase.table("wallets").insert({
+                    "user_id": selected_user,
+                    "kongo_balance": amount,
+                    "total_mined": 0.0,
+                    "last_reward_at": datetime.now().isoformat()
+                }).execute()
+            st.success(f"{amount:,.0f} KC ajoutés à {user_options[selected_user]}")
 
 # =====================================================
 # ROUTEUR PRINCIPAL

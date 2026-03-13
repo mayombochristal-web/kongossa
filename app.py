@@ -87,9 +87,7 @@ def login_signup():
                     if not user:
                         st.error("La création du compte a échoué.")
                         return
-
                     role = "admin" if verify_admin_code(new_email, admin_code) else "user"
-
                     profile_data = {
                         "id": user.id,
                         "username": username,
@@ -151,6 +149,7 @@ st.sidebar.write(f"ID : {user.id[:8]}...")
 menu_options = ["🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "⚙️ Paramètres"]
 if is_admin():
     menu_options.append("🛡️ Admin")
+
 menu = st.sidebar.radio("Navigation", menu_options)
 
 if st.sidebar.button("🚪 Déconnexion"):
@@ -195,48 +194,35 @@ def feed_page():
             post_text = st.text_area("Quoi de neuf ?")
             media_file = st.file_uploader("Ajouter une image/vidéo (optionnel)", type=["png", "jpg", "jpeg", "mp4"])
             submitted = st.form_submit_button("Publier")
+
             if submitted and post_text:
                 try:
                     media_path = None
                     media_type = None
-                                if submitted and post_text:
-                try:
-                    media_path = None
-                    media_type = None
-                    
+
                     if media_file:
-                        # 1. Préparation du nom de fichier unique
                         ext = media_file.name.split(".")[-1]
                         file_name = f"{user.id}/{uuid.uuid4()}.{ext}"
-                        
-                        # 2. Upload avec spécification explicite du type MIME (Correction Erreur 400)
                         supabase.storage.from_("media").upload(
                             path=file_name,
                             file=media_file.getvalue(),
                             file_options={"content-type": media_file.type}
                         )
-                        
                         media_path = file_name
                         media_type = media_file.type
 
-                    # 3. Préparation des données du post
                     post_data = {
-                        [span_1](start_span)"user_id": user.id,[span_1](end_span)
-                        [span_2](start_span)"text": post_text,[span_2](end_span)
-                        [span_3](start_span)"media_path": media_path,[span_3](end_span)
-                        [span_4](start_span)"media_type": media_type,[span_4](end_span)
-                        [span_5](start_span)"created_at": datetime.now().isoformat()[span_5](end_span)
+                        "user_id": user.id,
+                        "text": post_text,
+                        "media_path": media_path,
+                        "media_type": media_type,
+                        "created_at": datetime.now().isoformat()
                     }
-                    
-                    # 4. Insertion en base de données
-                    [span_6](start_span)supabase.table("posts").insert(post_data).execute()[span_6](end_span)
-                    
-                    [span_7](start_span)st.success("Post publié !")[span_7](end_span)
-                    time.sleep(1) # Laisse le temps de voir le message de succès
-                    [span_8](start_span)st.rerun()[span_8](end_span)
-                    
+                    supabase.table("posts").insert(post_data).execute()
+                    st.success("Post publié !")
+                    st.rerun()
                 except Exception as e:
-                    [span_9](start_span)st.error(f"Erreur lors de la publication : {e}")[span_9](end_span)
+                    st.error(f"Erreur lors de la publication : {e}")
 
     posts = supabase.table("posts").select(
         "*, profiles!inner(username, profile_pic), likes(count), comments(count)"
@@ -257,33 +243,33 @@ def feed_page():
                     st.image("https://via.placeholder.com/40", width=40)
             with col2:
                 st.markdown(f"**{post['profiles']['username']}** · {post['created_at'][:10]}")
-            st.write(post["text"])
-            if post.get("media_path"):
-                file_url = supabase.storage.from_("media").get_public_url(post["media_path"])
-                if post.get("media_type") and "image" in post["media_type"]:
-                    st.image(file_url)
-                elif post.get("media_type") and "video" in post["media_type"]:
-                    st.video(file_url)
+                st.write(post["text"])
+                if post.get("media_path"):
+                    file_url = supabase.storage.from_("media").get_public_url(post["media_path"])
+                    if post.get("media_type") and "image" in post["media_type"]:
+                        st.image(file_url)
+                    elif post.get("media_type") and "video" in post["media_type"]:
+                        st.video(file_url)
 
-            like_count = len(post.get("likes", []))
-            comment_count = len(post.get("comments", []))
+                like_count = len(post.get("likes", []))
+                comment_count = len(post.get("comments", []))
 
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                if st.button(f"❤️ {like_count}", key=f"like_{post['id']}"):
-                    like_post(post["id"])
-            with col_b:
-                with st.popover(f"💬 {comment_count} commentaires"):
-                    comments = supabase.table("comments").select(
-                        "*, profiles(username)"
-                    ).eq("post_id", post["id"]).order("created_at").execute()
-                    for c in comments.data:
-                        st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
-                    new_comment = st.text_input("Votre commentaire", key=f"input_{post['id']}")
-                    if st.button("Envoyer", key=f"send_{post['id']}"):
-                        add_comment(post["id"], new_comment)
-            with col_c:
-                st.button("🔗 Partager", key=f"share_{post['id']}")
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    if st.button(f"❤️ {like_count}", key=f"like_{post['id']}"):
+                        like_post(post["id"])
+                with col_b:
+                    with st.popover(f"💬 {comment_count} commentaires"):
+                        comments = supabase.table("comments").select(
+                            "*, profiles(username)"
+                        ).eq("post_id", post["id"]).order("created_at").execute()
+                        for c in comments.data:
+                            st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
+                        new_comment = st.text_input("Votre commentaire", key=f"input_{post['id']}")
+                        if st.button("Envoyer", key=f"send_{post['id']}"):
+                            add_comment(post["id"], new_comment)
+                with col_c:
+                    st.button("🔗 Partager", key=f"share_{post['id']}")
             st.divider()
 
 def profile_page():
@@ -307,6 +293,7 @@ def profile_page():
     st.subheader("Mes statistiques")
     post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute()
     st.metric("Posts publiés", post_count.count)
+
     followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute()
     following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute()
     col1, col2 = st.columns(2)
@@ -329,7 +316,6 @@ def messages_page():
 
     contacts = supabase.table("profiles").select("id, username").in_("id", list(contact_ids)).execute()
     contact_dict = {c["id"]: c["username"] for c in contacts.data}
-
     selected_contact = st.selectbox(
         "Choisir un contact",
         options=list(contact_dict.keys()),
@@ -374,6 +360,7 @@ def messages_page():
 
 def marketplace_page():
     st.header("🏪 Marketplace")
+
     with st.expander("➕ Ajouter une annonce"):
         with st.form("new_listing"):
             title = st.text_input("Titre")
@@ -381,12 +368,17 @@ def marketplace_page():
             price = st.number_input("Prix (KC)", min_value=0.0, step=0.1)
             media = st.file_uploader("Image du produit", type=["png", "jpg", "jpeg"])
             submitted = st.form_submit_button("Publier l'annonce")
+
             if submitted and title:
                 try:
                     media_url = None
                     if media:
                         file_name = f"marketplace/{user.id}/{uuid.uuid4()}.jpg"
-                        supabase.storage.from_("marketplace").upload(file_name, media.getvalue())
+                        supabase.storage.from_("marketplace").upload(
+                            path=file_name,
+                            file=media.getvalue(),
+                            file_options={"content-type": media.type}
+                        )
                         media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
 
                     supabase.table("marketplace_listings").insert({
@@ -490,12 +482,12 @@ def settings_page():
 
 def admin_page():
     st.header("🛡️ Espace Administration")
-    st.caption("Actions réservées à la modération – utilisez‑les avec discernement.")
+    st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")
+
     tab1, tab2, tab3 = st.tabs(["Utilisateurs", "Posts signalés", "Logs d'action"])
 
     with tab1:
         st.subheader("Gestion des utilisateurs")
-        # Note : la colonne email n'est pas dans profiles, on ne l'affiche pas
         users = supabase.table("profiles").select("id, username, role, created_at").execute()
         df_users = pd.DataFrame(users.data)
         st.dataframe(df_users)
@@ -504,48 +496,4 @@ def admin_page():
             user_id = st.selectbox(
                 "Sélectionner un utilisateur",
                 options=df_users["id"],
-                format_func=lambda x: df_users[df_users["id"] == x]["username"].values[0]
-            )
-            new_role = st.selectbox("Nouveau rôle", ["user", "admin", "moderator"])
-            if st.form_submit_button("Appliquer"):
-                supabase.table("profiles").update({"role": new_role}).eq("id", user_id).execute()
-                st.success("Rôle mis à jour")
-                st.cache_data.clear()
-                st.rerun()
-
-    with tab2:
-        st.subheader("Posts signalés")
-        posts = supabase.table("posts").select("*, profiles(username)").order("created_at", desc=True).limit(100).execute()
-        for post in posts.data:
-            with st.expander(f"Post de {post['profiles']['username']} -- {post['created_at'][:16]}"):
-                st.write(post["text"])
-                if post.get("media_path"):
-                    file_url = supabase.storage.from_("media").get_public_url(post["media_path"])
-                    st.image(file_url, width=200)
-                if st.button("🗑️ Supprimer ce post", key=f"del_{post['id']}"):
-                    supabase.table("posts").delete().eq("id", post["id"]).execute()
-                    st.success("Post supprimé")
-                    st.rerun()
-
-    with tab3:
-        st.subheader("Journal des actions")
-        st.info("Fonctionnalité à venir : traçabilité des actions d'administration.")
-
-# =====================================================
-# ROUTEUR PRINCIPAL
-# =====================================================
-if menu == "🌐 Feed":
-    feed_page()
-elif menu == "👤 Mon Profil":
-    profile_page()
-elif menu == "✉️ Messages":
-    messages_page()
-elif menu == "🏪 Marketplace":
-    marketplace_page()
-elif menu == "💰 Wallet":
-    wallet_page()
-elif menu == "⚙️ Paramètres":
-    settings_page()
-elif menu == "🛡️ Admin":
-    admin_page()
-    
+                format_func=lambda x: df_us

@@ -199,25 +199,44 @@ def feed_page():
                 try:
                     media_path = None
                     media_type = None
+                                if submitted and post_text:
+                try:
+                    media_path = None
+                    media_type = None
+                    
                     if media_file:
+                        # 1. Préparation du nom de fichier unique
                         ext = media_file.name.split(".")[-1]
                         file_name = f"{user.id}/{uuid.uuid4()}.{ext}"
-                        supabase.storage.from_("media").upload(file_name, media_file.getvalue())
+                        
+                        # 2. Upload avec spécification explicite du type MIME (Correction Erreur 400)
+                        supabase.storage.from_("media").upload(
+                            path=file_name,
+                            file=media_file.getvalue(),
+                            file_options={"content-type": media_file.type}
+                        )
+                        
                         media_path = file_name
                         media_type = media_file.type
 
+                    # 3. Préparation des données du post
                     post_data = {
-                        "user_id": user.id,
-                        "text": post_text,
-                        "media_path": media_path,
-                        "media_type": media_type,
-                        "created_at": datetime.now().isoformat()
+                        [span_1](start_span)"user_id": user.id,[span_1](end_span)
+                        [span_2](start_span)"text": post_text,[span_2](end_span)
+                        [span_3](start_span)"media_path": media_path,[span_3](end_span)
+                        [span_4](start_span)"media_type": media_type,[span_4](end_span)
+                        [span_5](start_span)"created_at": datetime.now().isoformat()[span_5](end_span)
                     }
-                    supabase.table("posts").insert(post_data).execute()
-                    st.success("Post publié !")
-                    st.rerun()
+                    
+                    # 4. Insertion en base de données
+                    [span_6](start_span)supabase.table("posts").insert(post_data).execute()[span_6](end_span)
+                    
+                    [span_7](start_span)st.success("Post publié !")[span_7](end_span)
+                    time.sleep(1) # Laisse le temps de voir le message de succès
+                    [span_8](start_span)st.rerun()[span_8](end_span)
+                    
                 except Exception as e:
-                    st.error(f"Erreur lors de la publication : {e}")
+                    [span_9](start_span)st.error(f"Erreur lors de la publication : {e}")[span_9](end_span)
 
     posts = supabase.table("posts").select(
         "*, profiles!inner(username, profile_pic), likes(count), comments(count)"

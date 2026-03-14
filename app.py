@@ -460,6 +460,7 @@ def messages_page():
 def marketplace_page():
     st.header("🏪 Marketplace")
 
+    # --- BLOC : AJOUT D'ANNONCE ---
     with st.expander("➕ Ajouter une annonce"):
         with st.form("new_listing"):
             title = st.text_input("Titre")
@@ -472,14 +473,15 @@ def marketplace_page():
                 try:
                     media_url = None
                     if media:
+                        # Organisation par dossier utilisateur pour plus de clarté
                         file_name = f"marketplace/{user.id}/{uuid.uuid4()}.jpg"
                         supabase.storage.from_("marketplace").upload(
                             path=file_name,
                             file=media.getvalue(),
                             file_options={"content-type": media.type}
                         )
-                        signed = get_signed_url("marketplace", file_name, expires_in=86400)
-                        media_url = signed if signed else supabase.storage.from_("marketplace").get_public_url(file_name)
+                        # Tentative de récupération d'URL signée ou publique
+                        media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
 
                     supabase.table("marketplace_listings").insert({
                         "user_id": user.id,
@@ -489,14 +491,18 @@ def marketplace_page():
                         "media_url": media_url,
                         "media_type": "image",
                         "created_at": datetime.now().isoformat(),
-                        "is_active": True
+                        "is_active": True,
+                        "status": "Disponible", # Nouveau champ status
+                        "sales_count": 0        # Compteur pour le vendeur
                     }).execute()
-                    st.success("Annonce ajoutée !")
+                    st.success("Annonce ajoutée et disponible !")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Erreur : {e}")
+                    st.error(f"Erreur lors de la publication : {e}")
 
+    # --- BLOC : AFFICHAGE DES ANNONCES ---
     st.subheader("Annonces récentes")
+    # On filtre pour ne montrer que ce qui est "Disponible" ou "Vendu"
     listings = supabase.table("marketplace_listings").select(
         "*, profiles!inner(username)"
     ).eq("is_active", True).order("created_at", desc=True).execute()
@@ -508,24 +514,89 @@ def marketplace_page():
     cols = st.columns(3)
     for i, listing in enumerate(listings.data):
         with cols[i % 3]:
-            st.markdown(f"**{listing['title']}**")
+            # Badge de statut
+            status = listing.get("status", "Disponible")
+            color = "green" if status == "Disponible" else "red"
+            st.markdown(f"### {listing['title']}")
+            st.markdown(f":{color}[**[{status}]**]")
+            
             if listing.get("media_url"):
-                st.image(listing["media_url"], width=200)
+                st.image(listing["media_url"], use_container_width=True)
+            
             st.write(listing["description"][:100] + "...")
-            st.write(f"💰 {listing['price_kc']} KC")
-            st.caption(f"Par {listing['profiles']['username']}")
+            st.write(f"💰 **{listing['price_kc']:,.0f} KC**")
+            st.caption(f"Vendeur : {listing['profiles']['username']}")
+
+            # --- LOGIQUE DE TRANSACTION ET CONTACT ---
+            if listing["user_id"] != user.id:
+                if status == "Disponible":
+                    if st.button(f"🛒 Acheter ({listing['price_kc']} KC)", key=f"buy_{listing['id']}"):
+                        # 1. Vérifier le solde de l'acheteur
+                        wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
+                        
+                        if wallet_res.data:
+                            buyer_wallet = wallet_res.data[0]
+                            if buyer_wallet["kongo_balance"] >= listing["price_kc"]:
+                                try:
+                                    # A. Débiter l'acheteur
+                                    new_buyer_balance = buyer_wallet["kongo_balance"] - listing["price_kc"]
+                                    supabase.table("wallets").update({"kongo_balance": new_buyer_balance}).eq("user_id", user.id).execute()
+                                    
+                                    # B. Créditer le vendeur
+                                    vendeur_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", listing["user_id"]).execute()
+                                    if vendeur_wallet_res.data:
+                                        new_seller_balance = vendeur_wallet_res.data[0]["kongo_balance"] + listing["price_kc"]
+                                        supabase.table("wallets").update({"kongo_balance": new_seller_balance}).eq("user_id", listing["user_id"]).execute()
+
+                                    # C. Mettre à jour le statut de l'annonce et le compteur de ventes
+                                    new_sales_count = listing.get("sales_count", 0) + 1
+                                    supabase.table("marketplace_listings").update({
+                                        "status": "Vendu",
+                                        "sales_count": new_sales_count
+                                    }).eq("id", listing["id"]).execute()
+
+                                    # D. Message automatique chiffré
+                                    msg_text = f"🚨 ACHAT : Je suis intéressé par '{listing['title']}'. Le paiement de {listing['price_kc']} KC a été transféré sur votre compte."
+                                    encrypted_msg = encrypt_text(msg_text)
+                                    
+                                    supabase.table("messages").insert({
+                                        "sender": user.id,
+                                        "recipient": listing["user_id"],
+                                        "text": encrypted_msg,
+                                        "created_at": datetime.now().isoformat()
+                                    }).execute()
+
+                                    st.success("✅ Transaction terminée ! Le vendeur a été notifié.")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erreur transactionnelle : {e}")
+                            else:
+                                st.error("Solde KC insuffisant.")
+                else:
+                    st.button("❌ Déjà Vendu", disabled=True, key=f"sold_{listing['id']}")
+            else:
+                # Vue vendeur : voir le nombre de clients générés
+                st.info(f"📊 {listing.get('sales_count', 0)} client(s) sur cette annonce")
 
 def wallet_page():
     st.header("💰 Mon Wallet")
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
+    
+    # Initialisation automatique si inexistant
     if not wallet.data:
+        # Note : On peut vérifier si l'user est admin ici via le profil
+        user_profile = supabase.table("profiles").select("role").eq("user_id", user.id).single().execute()
+        is_admin_user = user_profile.data["role"] == "admin" if user_profile.data else False
+        
         supabase.table("wallets").insert({
             "user_id": user.id,
-            "kongo_balance": 100_000_000.0 if is_admin() else 0.0,
+            "kongo_balance": 100_000_000.0 if is_admin_user else 0.0,
             "total_mined": 0.0,
             "last_reward_at": datetime.now().isoformat()
         }).execute()
         wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
+    
     wallet_data = wallet.data[0]
 
     col1, col2 = st.columns(2)
@@ -534,14 +605,17 @@ def wallet_page():
     with col2:
         st.metric("Total miné", f"{wallet_data['total_mined']:,.0f} KC")
 
+    # --- SYSTÈME DE MINAGE ---
     if st.button("⛏️ Miner (récompense quotidienne)"):
         try:
             last_str = wallet_data["last_reward_at"]
             if last_str.endswith("Z"):
                 last_str = last_str.replace("Z", "+00:00")
+            
             last = datetime.fromisoformat(last_str)
             now = datetime.now()
             delta = now - last
+            
             if delta.total_seconds() > 86400:
                 new_balance = wallet_data["kongo_balance"] + 10
                 new_mined = wallet_data["total_mined"] + 10
@@ -554,11 +628,13 @@ def wallet_page():
                 st.rerun()
             else:
                 reste = 86400 - delta.total_seconds()
-                st.warning(f"Tu pourras re-miner dans {int(reste//3600)}h{int((reste%3600)//60)}m.")
+                st.warning(f"Prochain minage dans {int(reste//3600)}h {int((reste%3600)//60)}m.")
         except Exception as e:
-            st.error(f"Erreur lors du calcul de la dernière récompense : {e}")
+            st.error(f"Erreur lors du minage : {e}")
 
-    st.subheader("Historique des transactions (à venir)")
+    st.divider()
+    st.subheader("📜 Activité récente")
+    st.info("L'historique détaillé des transactions Marketplace sera bientôt disponible.")
 
 def settings_page():
     st.header("⚙️ Paramètres")

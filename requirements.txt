@@ -1,4 +1,17 @@
+# --- Base du système ---
 streamlit>=1.28.0
 supabase>=1.0.0
 pandas>=1.5.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# --- Traitement d'images et vidéos (TTU-MC³) ---
+# On utilise la version headless pour éviter les erreurs de serveur
+opencv-python-headless>=4.8.0 
 Pillow>=10.0.0
+
+# --- Sécurité et Tunnels Privés ---
+cryptography>=41.0.0
+
+# --- Utilitaires ---
+python-dotenv

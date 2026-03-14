@@ -643,13 +643,14 @@ def settings_page():
     PREMIUM_PRICE = 10000.0
 
     # 1. Vérification du plan actuel
-    [span_4](start_span)sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()[span_4](end_span)
+   sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()
+    
     if sub.data:
-        [span_5](start_span)plan = sub.data[0]["plan_type"][span_5](end_span)
-        [span_6](start_span)expires = sub.data[0].get("expires_at")[span_6](end_span)
-        [span_7](start_span)st.info(f"Plan actuel : **{plan}**" + (f" (expire le {expires[:10]})" if expires else ""))[span_7](end_span)
+        plan = sub.data[0]["plan_type"]
+        expires = sub.data[0].get("expires_at")
+        st.info(f"Plan actuel : **{plan}**" + (f" (expire le {expires[:10]})" if expires else ""))
     else:
-        [span_8](start_span)st.info("Plan actuel : **Gratuit**")[span_8](end_span)
+        st.info("Plan actuel : **Gratuit**")
 
     # 2. Bouton d'achat Premium avec logique de paiement
     if st.button("Passer à Premium (10 000 KC)"):

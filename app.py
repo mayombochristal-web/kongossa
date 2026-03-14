@@ -562,29 +562,59 @@ def wallet_page():
 
 def settings_page():
     st.header("⚙️ Paramètres")
-    sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()
+    
+    # Prix de l'abonnement Premium
+    PREMIUM_PRICE = 10000.0
+
+    # 1. Vérification du plan actuel
+    [span_4](start_span)sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()[span_4](end_span)
     if sub.data:
-        plan = sub.data[0]["plan_type"]
-        expires = sub.data[0].get("expires_at")
-        st.info(f"Plan actuel : **{plan}**" + (f" (expire le {expires[:10]})" if expires else ""))
+        [span_5](start_span)plan = sub.data[0]["plan_type"][span_5](end_span)
+        [span_6](start_span)expires = sub.data[0].get("expires_at")[span_6](end_span)
+        [span_7](start_span)st.info(f"Plan actuel : **{plan}**" + (f" (expire le {expires[:10]})" if expires else ""))[span_7](end_span)
     else:
-        st.info("Plan actuel : **Gratuit**")
+        [span_8](start_span)st.info("Plan actuel : **Gratuit**")[span_8](end_span)
 
-    if st.button("Passer à Premium"):
-        supabase.table("subscriptions").insert({
-            "user_id": user.id,
-            "plan_type": "Premium",
-            "activated_at": datetime.now().isoformat(),
-            "expires_at": (datetime.now().replace(year=datetime.now().year+1)).isoformat(),
-            "is_active": True
-        }).execute()
-        st.success("Compte Premium activé !")
-        st.rerun()
+    # 2. Bouton d'achat Premium avec logique de paiement
+    if st.button("Passer à Premium (10 000 KC)"):
+        # Récupérer le wallet de l'utilisateur
+        [span_9](start_span)wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()[span_9](end_span)
+        
+        if wallet_res.data:
+            wallet_data = wallet_res.data[0]
+            [span_10](start_span)current_balance = wallet_data["kongo_balance"][span_10](end_span)
+            
+            if current_balance >= PREMIUM_PRICE:
+                try:
+                    # A. Débiter le compte
+                    new_balance = current_balance - PREMIUM_PRICE
+                    supabase.table("wallets").update({
+                        "kongo_balance": new_balance
+                    [span_11](start_span)}).eq("user_id", user.id).execute()[span_11](end_span)
+                    
+                    # B. Activer l'abonnement
+                    supabase.table("subscriptions").insert({
+                        [span_12](start_span)"user_id": user.id,[span_12](end_span)
+                        [span_13](start_span)"plan_type": "Premium",[span_13](end_span)
+                        [span_14](start_span)"activated_at": datetime.now().isoformat(),[span_14](end_span)
+                        [span_15](start_span)"expires_at": (datetime.now().replace(year=datetime.now().year+1)).isoformat(),[span_15](end_span)
+                        [span_16](start_span)"is_active": True[span_16](end_span)
+                    [span_17](start_span)}).execute()[span_17](end_span)
+                    
+                    [span_18](start_span)st.success(f"Compte Premium activé ! {PREMIUM_PRICE:,.0f} KC ont été débités.")[span_18](end_span)
+                    time.sleep(2)
+                    [span_19](start_span)st.rerun()[span_19](end_span)
+                except Exception as e:
+                    st.error(f"Erreur lors de la transaction : {e}")
+            else:
+                st.error(f"Solde insuffisant. Il vous manque {PREMIUM_PRICE - current_balance:,.0f} KC.")
+        else:
+            st.error("Portefeuille introuvable. Veuillez d'abord initialiser votre Wallet.")
 
-    st.divider()
-    st.subheader("Zone dangereuse")
-    if st.button("Supprimer mon compte", type="primary"):
-        st.warning("Fonction désactivée pour le moment.")
+    [span_20](start_span)st.divider()[span_20](end_span)
+    [span_21](start_span)st.subheader("Zone dangereuse")[span_21](end_span)
+    [span_22](start_span)if st.button("Supprimer mon compte", type="primary"):[span_22](end_span)
+        [span_23](start_span)st.warning("Fonction désactivée pour le moment.")[span_23](end_span)
 
 def admin_page():
     st.header("🛡️ Espace Administration")

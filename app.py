@@ -9,9 +9,9 @@ import hashlib
 import hmac
 import base64
 import gc
-import json
 import random
 from cryptography.fernet import Fernet
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
 
 # =====================================================
 # CONFIGURATION
@@ -44,8 +44,8 @@ def get_fernet():
 
 fernet = get_fernet()
 
-# Initialisation des cadeaux culturels (à appeler une seule fois)
 def init_gift_definitions():
+    """Initialise les 10 cadeaux culturels dans Supabase."""
     gifts = [
         {"name": "L’Atome d’Ogooué", "emoji": "💧", "kc_cost": 50, "animation_type": "blue_shockwave", "ttu_impact": 0.2},
         {"name": "Le Masque Punu", "emoji": "🎭", "kc_cost": 80, "animation_type": "petal_fall", "ttu_impact": 0.3},
@@ -59,9 +59,12 @@ def init_gift_definitions():
         {"name": "La Porte de l’Oracle", "emoji": "⛩️", "kc_cost": 1000, "animation_type": "portal", "ttu_impact": 1.5},
     ]
     for gift in gifts:
-        existing = supabase.table("gift_definitions").select("id").eq("name", gift["name"]).execute()
-        if not existing.data:
-            supabase.table("gift_definitions").insert(gift).execute()
+        try:
+            existing = supabase.table("gift_definitions").select("id").eq("name", gift["name"]).execute()
+            if not existing.data:
+                supabase.table("gift_definitions").insert(gift).execute()
+        except Exception:
+            pass
 
 init_gift_definitions()
 
@@ -143,7 +146,6 @@ def login_signup():
 
                     role = "admin" if verify_admin_code(new_email, admin_code) else "user"
 
-                    # Profil
                     profile_data = {
                         "id": user.id,
                         "username": username,
@@ -155,7 +157,6 @@ def login_signup():
                     }
                     supabase.table("profiles").insert(profile_data).execute()
 
-                    # Wallet
                     initial_balance = 100_000_000.0 if role == "admin" else 0.0
                     supabase.table("wallets").insert({
                         "user_id": user.id,
@@ -164,7 +165,6 @@ def login_signup():
                         "last_reward_at": datetime.now().isoformat()
                     }).execute()
 
-                    # Paramètres TST (TTU-MC³)
                     supabase.table("tst_params").insert({
                         "username": username,
                         "phi_m": 1.0,
@@ -180,7 +180,7 @@ def login_signup():
                     st.error(f"Erreur lors de l'inscription : {e}")
 
 def logout():
-    if "tst_params" in st.session_state:
+    if "tst_params" in st.session_state and "profile" in st.session_state:
         username = st.session_state.profile["username"]
         supabase.table("tst_params").update(st.session_state.tst_params).eq("username", username).execute()
     supabase.auth.sign_out()
@@ -198,8 +198,11 @@ user = st.session_state["user"]
 # =====================================================
 @st.cache_data(ttl=60)
 def get_profile(user_id):
-    res = supabase.table("profiles").select("*").eq("id", user_id).execute()
-    return res.data[0] if res.data else None
+    try:
+        res = supabase.table("profiles").select("*").eq("id", user_id).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
 
 profile = get_profile(user.id)
 if profile is None:
@@ -216,22 +219,27 @@ st.session_state.profile = profile
 def is_admin():
     return profile and profile.get("role") == "admin"
 
-# Chargement des paramètres TST
 @st.cache_data(ttl=300)
 def load_tst_params(username):
-    res = supabase.table("tst_params").select("*").eq("username", username).execute()
-    if res.data:
-        return res.data[0]
-    else:
-        default = {
-            "username": username,
-            "phi_m": 1.0,
-            "phi_c": 1.0,
-            "phi_d": 1.0,
-            "stability_threshold": 0.5
-        }
+    try:
+        res = supabase.table("tst_params").select("*").eq("username", username).execute()
+        if res.data:
+            return res.data[0]
+    except Exception:
+        pass
+    # default
+    default = {
+        "username": username,
+        "phi_m": 1.0,
+        "phi_c": 1.0,
+        "phi_d": 1.0,
+        "stability_threshold": 0.5
+    }
+    try:
         supabase.table("tst_params").insert(default).execute()
-        return default
+    except Exception:
+        pass
+    return default
 
 tst_params = load_tst_params(profile["username"])
 st.session_state.tst_params = tst_params
@@ -240,7 +248,6 @@ st.session_state.tst_params = tst_params
 # CONTRÔLEUR DE STABILITÉ (DISSIPATION)
 # =====================================================
 def update_dissipation(increment=0.05):
-    """Met à jour phi_d et sauvegarde en base."""
     params = st.session_state.tst_params
     last_update = st.session_state.get("last_dissipation_update", datetime.now())
     now = datetime.now()
@@ -249,12 +256,14 @@ def update_dissipation(increment=0.05):
     params["phi_d"] = min(2.0, params["phi_d"] + increment)
     st.session_state.last_dissipation_update = now
     st.session_state.tst_params = params
-    supabase.table("tst_params").update({
-        "phi_d": params["phi_d"]
-    }).eq("username", profile["username"]).execute()
+    try:
+        supabase.table("tst_params").update({
+            "phi_d": params["phi_d"]
+        }).eq("username", profile["username"]).execute()
+    except Exception:
+        pass
 
 def stability_control(func):
-    """Décorateur pour adapter l'UI en fonction de la dissipation."""
     def wrapper(*args, **kwargs):
         params = st.session_state.tst_params
         if params["phi_d"] > params["stability_threshold"]:
@@ -283,7 +292,7 @@ if st.sidebar.button("🚪 Déconnexion"):
     logout()
 
 # =====================================================
-# FONCTIONS UTILES (communes)
+# FONCTIONS UTILES
 # =====================================================
 def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
     try:
@@ -293,15 +302,17 @@ def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
         return None
 
 def get_user_badge(user_id):
-    """Retourne un emoji selon le nombre de cadeaux envoyés."""
-    total_gifts = supabase.table("stream_gifts").select("*", count="exact").eq("sender_id", user_id).execute()
-    count = total_gifts.count if total_gifts.count else 0
-    if count >= 50:
-        return "🔥🔥"
-    elif count >= 20:
-        return "🔥"
-    elif count >= 5:
-        return "✨"
+    try:
+        total_gifts = supabase.table("stream_gifts").select("*", count="exact").eq("sender_id", user_id).execute()
+        count = total_gifts.count if total_gifts.count else 0
+        if count >= 50:
+            return "🔥🔥"
+        elif count >= 20:
+            return "🔥"
+        elif count >= 5:
+            return "✨"
+    except Exception:
+        pass
     return ""
 
 def like_post(post_id):
@@ -310,10 +321,11 @@ def like_post(post_id):
             "post_id": post_id,
             "user_id": user.id
         }).execute()
-        # Mise à jour du compteur dénormalisé
-        supabase.table("posts").update({
-            "like_count": supabase.table("posts").select("like_count").eq("id", post_id).execute().data[0]["like_count"] + 1
-        }).eq("id", post_id).execute()
+        # Mise à jour du compteur
+        post = supabase.table("posts").select("like_count").eq("id", post_id).execute()
+        if post.data:
+            new_count = post.data[0]["like_count"] + 1
+            supabase.table("posts").update({"like_count": new_count}).eq("id", post_id).execute()
         update_dissipation(0.02)
         st.success("👍 Like ajouté !")
         time.sleep(0.5)
@@ -325,18 +337,22 @@ def add_comment(post_id, text):
     if not text.strip():
         st.warning("Le commentaire ne peut pas être vide.")
         return
-    supabase.table("comments").insert({
-        "post_id": post_id,
-        "user_id": user.id,
-        "text": text
-    }).execute()
-    supabase.table("posts").update({
-        "comment_count": supabase.table("posts").select("comment_count").eq("id", post_id).execute().data[0]["comment_count"] + 1
-    }).eq("id", post_id).execute()
-    update_dissipation(0.03)
-    st.success("💬 Commentaire ajouté")
-    time.sleep(0.5)
-    st.rerun()
+    try:
+        supabase.table("comments").insert({
+            "post_id": post_id,
+            "user_id": user.id,
+            "text": text
+        }).execute()
+        post = supabase.table("posts").select("comment_count").eq("id", post_id).execute()
+        if post.data:
+            new_count = post.data[0]["comment_count"] + 1
+            supabase.table("posts").update({"comment_count": new_count}).eq("id", post_id).execute()
+        update_dissipation(0.03)
+        st.success("💬 Commentaire ajouté")
+        time.sleep(0.5)
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erreur : {e}")
 
 def delete_post(post_id):
     try:
@@ -351,17 +367,17 @@ def delete_post(post_id):
         st.error(f"Erreur lors de la suppression : {e}")
 
 def get_post_stats(post_id):
-    likes_res = supabase.table("likes").select("*", count="exact").eq("post_id", post_id).execute()
-    likes_count = likes_res.count if likes_res.count else 0
-    comments_res = supabase.table("comments").select("*", count="exact").eq("post_id", post_id).execute()
-    comments_count = comments_res.count if comments_res.count else 0
-    reactions_res = supabase.table("reactions").select("*", count="exact").eq("post_id", post_id).execute()
-    reactions_count = reactions_res.count if reactions_res.count else 0
-    return {
-        "likes": likes_count,
-        "comments": comments_count,
-        "reactions": reactions_count
-    }
+    try:
+        likes_res = supabase.table("likes").select("*", count="exact").eq("post_id", post_id).execute()
+        comments_res = supabase.table("comments").select("*", count="exact").eq("post_id", post_id).execute()
+        reactions_res = supabase.table("reactions").select("*", count="exact").eq("post_id", post_id).execute()
+        return {
+            "likes": likes_res.count if likes_res.count else 0,
+            "comments": comments_res.count if comments_res.count else 0,
+            "reactions": reactions_res.count if reactions_res.count else 0
+        }
+    except Exception:
+        return {"likes": 0, "comments": 0, "reactions": 0}
 
 EMOJI_HIERARCHY = {
     "🔥": {"label": "Hype", "cost": 10, "share": 8},
@@ -372,15 +388,15 @@ EMOJI_HIERARCHY = {
 def process_emoji_payment(post_id, author_id, emoji_type):
     cost = EMOJI_HIERARCHY[emoji_type]["cost"]
     share = EMOJI_HIERARCHY[emoji_type]["share"]
-    wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
-    if not wallet_res.data:
-        st.error("Portefeuille introuvable.")
-        return
-    wallet = wallet_res.data[0]
-    if wallet["kongo_balance"] < cost:
-        st.error(f"Solde insuffisant. Il vous manque {cost - wallet['kongo_balance']} KC.")
-        return
     try:
+        wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
+        if not wallet_res.data:
+            st.error("Portefeuille introuvable.")
+            return
+        wallet = wallet_res.data[0]
+        if wallet["kongo_balance"] < cost:
+            st.error(f"Solde insuffisant. Il vous manque {cost - wallet['kongo_balance']} KC.")
+            return
         new_bal = wallet["kongo_balance"] - cost
         supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
         author_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", author_id).execute()
@@ -402,74 +418,21 @@ def process_emoji_payment(post_id, author_id, emoji_type):
         st.error(f"Erreur lors du traitement de la réaction : {e}")
 
 # =====================================================
-# PAGE TOKTOK (FLUX VERTICAL TTU) - VERSION AVEC CAMÉRA ET PANÉLISTES
+# PAGE TOKTOK (FLUX VERTICAL TTU) - VERSION STABLE
 # =====================================================
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
-import gc
-import random
-
 def ttu_vertical_feed():
-    # CSS pour l'affichage des panélistes et le style général
+    # CSS minimal et sécurisé
     st.markdown("""
         <style>
-            .main > div { overflow: hidden; }
-            .stApp {
-                scroll-snap-type: y mandatory;
-                overflow-y: scroll;
-                height: 100vh;
-                scroll-behavior: smooth;
-            }
-            .ttu-slide {
-                scroll-snap-align: start;
-                height: 100vh;
-                display: flex;
-                flex-direction: row;
-                align-items: center;
-                justify-content: center;
-                background-color: #000;
-                position: relative;
-            }
-            .ttu-main {
-                width: 85%;
-                height: 100%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                flex-direction: column;
-                color: white;
-            }
-            .ttu-sidebar {
-                width: 15%;
-                height: 100%;
-                display: flex;
-                flex-direction: column;
-                justify-content: flex-end;
-                align-items: center;
-                padding: 20px 0;
-                color: white;
-                z-index: 10;
-            }
-            .ttu-action-button {
-                background: rgba(255,255,255,0.2);
-                border-radius: 50%;
+            .ttu-panelist-avatar {
                 width: 50px;
                 height: 50px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 10px 0;
-                backdrop-filter: blur(5px);
-                cursor: pointer;
-                transition: transform 0.2s;
-                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 50%;
+                border: 2px solid #00FF00;
+                background-color: #333;
+                margin: 5px;
             }
-            .ttu-action-button:hover {
-                transform: scale(1.1);
-                background: rgba(255,255,255,0.3);
-            }
-            .ttu-action-icon { font-size: 24px; }
-            .ttu-action-count { font-size: 14px; margin-top: -5px; }
+            .ttu-panelist-muted { border-color: #FF0000; }
             .ttu-gauge {
                 width: 30px;
                 height: 150px;
@@ -486,50 +449,12 @@ def ttu_vertical_feed():
                 background: rgba(0,0,0,0.5);
                 border-radius: 15px;
             }
-            .panelist-container {
-                position: absolute;
-                left: 10px;
-                top: 20%;
-                display: flex;
-                flex-direction: column;
-                gap: 15px;
-                z-index: 100;
-            }
-            .panelist-avatar {
-                width: 50px;
-                height: 50px;
-                border-radius: 50%;
-                border: 2px solid #00FF00;
-                background-color: #333;
-                background-size: cover;
-                background-position: center;
-            }
-            .panelist-muted { border-color: #FF0000; }
-            .ttu-chat-overlay {
-                position: absolute;
-                bottom: 20px;
-                left: 20px;
-                right: 20px;
-                background: rgba(0,0,0,0.7);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 15px;
-                color: white;
-                max-height: 200px;
-                overflow-y: auto;
-            }
-            @keyframes gift-flash {
-                0% { transform: scale(1); opacity: 1; }
-                50% { transform: scale(1.5); opacity: 0.8; }
-                100% { transform: scale(1); opacity: 1; }
-            }
-            .gift-animation { animation: gift-flash 0.5s ease; }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- 1. ACCÈS CAMÉRA (pour lancer son propre live) ---
+    # Caméra (pour lancer son live)
     st.subheader("📷 Lancer mon Live")
-    ctx = webrtc_streamer(
+    webrtc_streamer(
         key="live-stream",
         mode=WebRtcMode.SENDRECV,
         client_settings=ClientSettings(
@@ -539,25 +464,20 @@ def ttu_vertical_feed():
         video_html_attrs={"style": {"width": "100%", "margin-bottom": "20px"}},
     )
 
-    # --- 2. RÉCUPÉRATION DES ÉLÉMENTS HYBRIDES (panneaux actifs) ---
+    # Récupération des panneaux actifs
     try:
-        # On récupère les panneaux actifs avec le nom du créateur
         panels = supabase.table("ttu_panels").select(
             "*, profiles!creator_id(username, profile_pic)"
         ).eq("is_live", True).order("current_stability", desc=True).limit(10).execute()
-    except Exception as e:
-        st.error(f"Erreur de chargement des panneaux : {e}")
-        panels = type('obj', (object,), {'data': []})()  # objet factice avec .data vide
+    except Exception:
+        panels = type('obj', (object,), {'data': []})()
 
-    items = []
-    for p in panels.data:
-        items.append({"type": "panel", "data": p})
+    items = [{"type": "panel", "data": p} for p in panels.data]
     random.shuffle(items)
 
     if "ttu_index" not in st.session_state:
         st.session_state.ttu_index = 0
 
-    # Navigation par boutons (simule le swipe)
     col1, col2, col3 = st.columns([1, 10, 1])
     with col1:
         if st.button("⬆️", key="prev") and st.session_state.ttu_index > 0:
@@ -571,153 +491,120 @@ def ttu_vertical_feed():
             st.rerun()
 
     if not items:
-        st.info("Aucun panneau actif pour le moment. Lancez un live ou créez un panneau !")
+        st.info("Aucun panneau actif. Lancez un live ou créez un panneau !")
         return
 
     current = items[st.session_state.ttu_index]
-    with st.container():
-        st.markdown('<div class="ttu-slide">', unsafe_allow_html=True)
+    panel = current["data"]
 
-        # --- Partie principale (gauche) ---
-        st.markdown('<div class="ttu-main">', unsafe_allow_html=True)
-        if current["type"] == "panel":
-            panel = current["data"]
-            st.markdown(f"<h2>{panel['title']}</h2>", unsafe_allow_html=True)
-            st.markdown(f"<p>Créé par {panel['profiles']['username']}</p>", unsafe_allow_html=True)
+    # Contenu principal
+    col_main, col_sidebar = st.columns([0.85, 0.15])
 
-            # Affichage des panélistes (simulation - à remplacer par des données réelles)
-            # Idéalement, on aurait une table "panel_participants" avec statut micro
-            panelists = [
-                {"name": "User1", "mic": True, "pic": None},
-                {"name": "User2", "mic": False, "pic": None},
-                {"name": "User3", "mic": True, "pic": None},
-            ]
-            st.markdown('<div class="panelist-container">', unsafe_allow_html=True)
-            for p in panelists:
-                pic_style = f"background-image: url('{p['pic']}');" if p['pic'] else ""
-                status_class = "panelist-avatar" + (" panelist-muted" if not p['mic'] else "")
-                st.markdown(f'<div class="{status_class}" style="{pic_style}" title="{p["name"]}"></div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    with col_main:
+        st.markdown(f"## {panel['title']}")
+        st.markdown(f"Créé par {panel['profiles']['username']}")
 
-            # Chat du panneau
-            render_panel_chat(panel['id'])
+        # Affichage des panélistes (simulé)
+        st.markdown("**Panélistes**")
+        cols = st.columns(5)
+        panelists = [
+            {"name": "User1", "mic": True},
+            {"name": "User2", "mic": False},
+            {"name": "User3", "mic": True},
+        ]
+        for i, p in enumerate(panelists):
+            with cols[i]:
+                mic_class = "ttu-panelist-muted" if not p["mic"] else ""
+                st.markdown(f'<div class="ttu-panelist-avatar {mic_class}" title="{p["name"]}"></div>', unsafe_allow_html=True)
+                st.caption(p["name"])
 
-            stability = panel.get("current_stability", 1.0)
-        else:
-            # Si on avait des streams, on les traiterait ici
-            st.write("Stream live (à implémenter)")
-            stability = 1.0
+        # Chat du panneau
+        st.subheader("💬 Discussion")
+        render_panel_chat(panel['id'])
 
-        st.markdown('</div>', unsafe_allow_html=True)  # fin ttu-main
-
-        # --- Barre latérale d'actions (droite) ---
-        st.markdown('<div class="ttu-sidebar">', unsafe_allow_html=True)
-        creator_pic = current["data"]["profiles"].get("profile_pic") or "https://via.placeholder.com/50"
-        st.markdown(f"<img src='{creator_pic}' style='width:50px;height:50px;border-radius:50%;margin-bottom:20px;'>", unsafe_allow_html=True)
-
-        # Bouton like (résonance)
-        st.markdown('<div class="ttu-action-button" onclick="alert(\'Like !\')"><span class="ttu-action-icon">❤️</span></div>', unsafe_allow_html=True)
-        st.markdown('<div class="ttu-action-count">1.2k</div>', unsafe_allow_html=True)
-
-        # Bouton cadeau (popover)
-        with st.popover("🎁"):
-            st.write("Envoyer un cadeau")
-            try:
-                gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
-                if gifts.data:
-                    for g in gifts.data[:3]:
-                        if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}_{current['data']['id']}"):
-                            wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
-                            if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
-                                new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
-                                supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
-                                creator_id = current["data"]["creator_id"]
-                                creator_wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", creator_id).execute()
-                                if creator_wallet.data:
-                                    share = 1.0 if g["name"] == "La Porte de l’Oracle" else 0.8
-                                    creator_new = creator_wallet.data[0]["kongo_balance"] + g["kc_cost"] * share
-                                    supabase.table("wallets").update({"kongo_balance": creator_new}).eq("user_id", creator_id).execute()
-                                supabase.table("stream_gifts").insert({
-                                    "panel_id": current["data"]["id"],
-                                    "sender_id": user.id,
-                                    "gift_id": g["id"],
-                                    "combo_count": 1
-                                }).execute()
-                                new_stab = current["data"]["current_stability"] + g["ttu_impact"] * 0.1
-                                supabase.table("ttu_panels").update({"current_stability": new_stab}).eq("id", current["data"]["id"]).execute()
-                                st.success(f"🎉 Cadeau {g['name']} envoyé !")
-                                update_dissipation(0.3)
-                                st.markdown('<style>.ttu-main { animation: gift-flash 0.5s ease; }</style>', unsafe_allow_html=True)
-                                time.sleep(0.5)
-                                st.rerun()
-                            else:
-                                st.error("Solde KC insuffisant.")
-            except Exception as e:
-                st.error("Erreur lors du chargement des cadeaux.")
+    with col_sidebar:
+        st.image(panel['profiles'].get('profile_pic') or "https://via.placeholder.com/100", width=80)
+        st.metric("Stabilité", f"{panel.get('current_stability', 1.0):.2f}")
 
         # Jauge de stabilité
-        gauge_height = min(int(stability * 50), 100)
+        gauge_height = min(int(panel.get('current_stability', 1.0) * 50), 100)
         st.markdown(f"""
             <div class="ttu-gauge">
                 <div class="ttu-gauge-fill" style="height:{gauge_height}%;"></div>
             </div>
         """, unsafe_allow_html=True)
 
-        # Bouton commentaire
-        st.markdown('<div class="ttu-action-button" onclick="alert(\'Commentaire\')"><span class="ttu-action-icon">💬</span></div>', unsafe_allow_html=True)
-        st.markdown('<div class="ttu-action-count">342</div>', unsafe_allow_html=True)
+        if st.button("❤️ Like"):
+            st.info("Like (simulé)")
 
-        # Bouton partage
-        st.markdown('<div class="ttu-action-button" onclick="alert(\'Partager\')"><span class="ttu-action-icon">↗️</span></div>', unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)  # fin ttu-sidebar
-        st.markdown('</div>', unsafe_allow_html=True)  # fin ttu-slide
-
-        # Zone de saisie pour commentaire (en bas)
-        comment = st.chat_input("Ajouter un commentaire...")
-        if comment:
+        with st.popover("🎁 Cadeau"):
             try:
-                encrypted = encrypt_text(comment)
-                supabase.table("messages").insert({
-                    "sender": user.id,
-                    "panel_id": current["data"]["id"],
-                    "text": encrypted,
-                    "created_at": datetime.now().isoformat()
-                }).execute()
-                st.rerun()
-            except Exception as e:
-                st.error("Erreur lors de l'envoi du commentaire.")
+                gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
+                for g in gifts.data[:3]:
+                    if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}"):
+                        wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
+                        if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
+                            new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
+                            supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
+                            creator_id = panel["creator_id"]
+                            creator_wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", creator_id).execute()
+                            if creator_wallet.data:
+                                share = 1.0 if g["name"] == "La Porte de l’Oracle" else 0.8
+                                creator_new = creator_wallet.data[0]["kongo_balance"] + g["kc_cost"] * share
+                                supabase.table("wallets").update({"kongo_balance": creator_new}).eq("user_id", creator_id).execute()
+                            supabase.table("stream_gifts").insert({
+                                "panel_id": panel["id"],
+                                "sender_id": user.id,
+                                "gift_id": g["id"],
+                                "combo_count": 1
+                            }).execute()
+                            new_stab = panel["current_stability"] + g["ttu_impact"] * 0.1
+                            supabase.table("ttu_panels").update({"current_stability": new_stab}).eq("id", panel["id"]).execute()
+                            st.success(f"🎉 Cadeau {g['name']} envoyé !")
+                            update_dissipation(0.3)
+                            st.rerun()
+                        else:
+                            st.error("Solde KC insuffisant.")
+            except Exception:
+                st.error("Erreur cadeaux")
+
+        st.button("💬 Commenter")
+
+    # Zone de saisie pour commentaire (en bas)
+    comment = st.chat_input("Ajouter un commentaire...")
+    if comment:
+        try:
+            encrypted = encrypt_text(comment)
+            supabase.table("messages").insert({
+                "sender": user.id,
+                "panel_id": panel["id"],
+                "text": encrypted,
+                "created_at": datetime.now().isoformat()
+            }).execute()
+            st.rerun()
+        except Exception as e:
+            st.error("Erreur envoi commentaire")
 
 def render_panel_chat(panel_id):
-    """Affiche les messages d'un panneau sans faire planter l'app."""
+    """Affiche les derniers messages d'un panneau."""
     try:
-        # Requête sécurisée avec jointure sur sender
-        # Note: la syntaxe peut varier selon la version de supabase-py
-        # On utilise une approche plus robuste : récupérer les messages puis les profils
-        msgs = supabase.table("messages").select("sender, text, created_at").eq("panel_id", panel_id).order("created_at", desc=True).limit(5).execute()
+        msgs = supabase.table("messages").select("sender, text, created_at").eq("panel_id", panel_id).order("created_at", desc=True).limit(10).execute()
         if not msgs.data:
             st.info("Aucun message pour l'instant.")
             return
-
-        # Récupérer tous les sender_id uniques
         sender_ids = list(set(m["sender"] for m in msgs.data))
-        # Récupérer les profils correspondants
         profiles = supabase.table("profiles").select("id, username").in_("id", sender_ids).execute()
         profile_dict = {p["id"]: p["username"] for p in profiles.data}
-
         for msg in reversed(msgs.data):
             username = profile_dict.get(msg["sender"], "Inconnu")
             decrypted = decrypt_text(msg.get("text", ""))
             with st.chat_message("user"):
                 st.markdown(f"**{username}**: {decrypted}")
-    except Exception as e:
-        # En cas d'erreur, on affiche un message simple pour éviter l'écran noir
-        st.warning("Les messages sont temporairement indisponibles.")
-        # Optionnel : logguer l'erreur pour débogage
-        # st.error(f"Erreur render_panel_chat: {e}")
+    except Exception:
+        st.warning("Messages temporairement indisponibles.")
 
 # =====================================================
-# PAGE FEED (fil d'actualité classique)
+# PAGE FEED (fil d'actualité)
 # =====================================================
 @stability_control
 def feed_page(low_power=False):
@@ -765,7 +652,6 @@ def feed_page(low_power=False):
                     post_res = supabase.table("posts").insert(post_data).execute()
                     post_id = post_res.data[0]["id"]
 
-                    # Création d'une métadonnée spectrale (placeholder)
                     supabase.table("ttu_spectral_metadata").insert({
                         "post_id": post_id,
                         "spectral_m_hash": hashlib.sha256((post_text or "").encode()).hexdigest(),
@@ -781,11 +667,14 @@ def feed_page(low_power=False):
                 except Exception as e:
                     st.error(f"Erreur lors de la publication : {e}")
 
-    # Récupération des posts avec tri par tst_rank_score
-    query = supabase.table("posts").select(
-        "*, profiles!inner(username, profile_pic)"
-    ).order("tst_rank_score", desc=True).limit(50 if not low_power else 10).execute()
-    posts = query.data
+    # Récupération des posts
+    try:
+        query = supabase.table("posts").select(
+            "*, profiles!inner(username, profile_pic)"
+        ).order("tst_rank_score", desc=True).limit(50 if not low_power else 10).execute()
+        posts = query.data
+    except Exception:
+        posts = []
 
     if not posts:
         st.info("Aucun post pour le moment. Sois le premier à poster !")
@@ -825,11 +714,14 @@ def feed_page(low_power=False):
                         like_post(post["id"])
                 with col_b:
                     with st.popover("💬"):
-                        comments = supabase.table("comments").select(
-                            "*, profiles(username)"
-                        ).eq("post_id", post["id"]).order("created_at").execute()
-                        for c in comments.data:
-                            st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
+                        try:
+                            comments = supabase.table("comments").select(
+                                "*, profiles(username)"
+                            ).eq("post_id", post["id"]).order("created_at").execute()
+                            for c in comments.data:
+                                st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
+                        except Exception:
+                            st.warning("Erreur chargement commentaires")
                         new_comment = st.text_input("Votre commentaire", key=f"input_{post['id']}")
                         if st.button("Envoyer", key=f"send_{post['id']}"):
                             add_comment(post["id"], new_comment)
@@ -891,13 +783,16 @@ def profile_page():
             st.rerun()
 
     st.subheader("Mes statistiques")
-    post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute()
-    st.metric("Posts publiés", post_count.count)
-    followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute()
-    following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute()
-    col1, col2 = st.columns(2)
-    col1.metric("Abonnés", followers.count)
-    col2.metric("Abonnements", following.count)
+    try:
+        post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute()
+        followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute()
+        following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute()
+        st.metric("Posts publiés", post_count.count)
+        col1, col2 = st.columns(2)
+        col1.metric("Abonnés", followers.count)
+        col2.metric("Abonnements", following.count)
+    except Exception:
+        st.warning("Statistiques non disponibles")
 
     st.subheader("Badge de donateur")
     badge = get_user_badge(user.id)
@@ -908,8 +803,13 @@ def profile_page():
 # =====================================================
 def messages_page():
     st.header("✉️ Messagerie privée (chiffrée de bout en bout)")
-    sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
-    received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
+    try:
+        sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
+        received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
+    except Exception:
+        st.error("Erreur de chargement des conversations")
+        return
+
     contact_ids = set()
     for msg in sent.data:
         contact_ids.add(msg["recipient"])
@@ -930,10 +830,14 @@ def messages_page():
 
     if selected_contact:
         st.subheader(f"Discussion avec {contact_dict[selected_contact]} (messages chiffrés)")
-        messages = supabase.table("messages").select("*").or_(
-            f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
-            f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
-        ).order("created_at").limit(100).execute()
+        try:
+            messages = supabase.table("messages").select("*").or_(
+                f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
+                f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
+            ).order("created_at").limit(100).execute()
+        except Exception:
+            st.error("Erreur de chargement des messages")
+            return
 
         for msg in messages.data:
             decrypted_text = decrypt_text(msg.get("text", ""))
@@ -1013,9 +917,13 @@ def marketplace_page():
                     st.error(f"Erreur lors de la publication : {e}")
 
     st.subheader("Annonces récentes")
-    listings = supabase.table("marketplace_listings").select(
-        "*, profiles!inner(username)"
-    ).eq("is_active", True).order("created_at", desc=True).execute()
+    try:
+        listings = supabase.table("marketplace_listings").select(
+            "*, profiles!inner(username)"
+        ).eq("is_active", True).order("created_at", desc=True).execute()
+    except Exception:
+        st.error("Erreur de chargement des annonces")
+        return
 
     if not listings.data:
         st.info("Aucune annonce pour le moment.")
@@ -1037,10 +945,14 @@ def marketplace_page():
             if listing["user_id"] != user.id:
                 if status == "Disponible":
                     if st.button(f"🛒 Acheter ({listing['price_kc']} KC)", key=f"buy_{listing['id']}"):
-                        current_listing = supabase.table("marketplace_listings").select("status").eq("id", listing["id"]).single().execute()
-                        if current_listing.data and current_listing.data["status"] != "Disponible":
-                            st.error("Cette annonce n'est plus disponible.")
-                            st.rerun()
+                        # Vérifier statut
+                        try:
+                            current_listing = supabase.table("marketplace_listings").select("status").eq("id", listing["id"]).single().execute()
+                            if current_listing.data and current_listing.data["status"] != "Disponible":
+                                st.error("Cette annonce n'est plus disponible.")
+                                st.rerun()
+                        except Exception:
+                            pass
                         wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
                         if wallet_res.data:
                             buyer_wallet = wallet_res.data[0]
@@ -1089,19 +1001,23 @@ def marketplace_page():
 # =====================================================
 def wallet_page():
     st.header("💰 Mon Wallet")
-    wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
-    if not wallet.data:
-        user_profile = supabase.table("profiles").select("role").eq("id", user.id).single().execute()
-        is_admin_user = user_profile.data["role"] == "admin" if user_profile.data else False
-        supabase.table("wallets").insert({
-            "user_id": user.id,
-            "kongo_balance": 100_000_000.0 if is_admin_user else 0.0,
-            "total_mined": 0.0,
-            "last_reward_at": datetime.now().isoformat()
-        }).execute()
+    try:
         wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
+        if not wallet.data:
+            user_profile = supabase.table("profiles").select("role").eq("id", user.id).single().execute()
+            is_admin_user = user_profile.data["role"] == "admin" if user_profile.data else False
+            supabase.table("wallets").insert({
+                "user_id": user.id,
+                "kongo_balance": 100_000_000.0 if is_admin_user else 0.0,
+                "total_mined": 0.0,
+                "last_reward_at": datetime.now().isoformat()
+            }).execute()
+            wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
+        wallet_data = wallet.data[0]
+    except Exception:
+        st.error("Erreur de chargement du wallet")
+        return
 
-    wallet_data = wallet.data[0]
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Solde KC", f"{wallet_data['kongo_balance']:,.0f} KC")
@@ -1144,21 +1060,24 @@ def settings_page():
     st.header("⚙️ Paramètres")
     PREMIUM_PRICE = 10000.0
 
-    sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()
-    if sub.data:
-        plan = sub.data[0]["plan_type"]
-        expires = sub.data[0].get("expires_at")
-        st.info(f"Plan actuel : **{plan}**" + (f" (expire le {expires[:10]})" if expires else ""))
-    else:
+    try:
+        sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()
+        if sub.data:
+            plan = sub.data[0]["plan_type"]
+            expires = sub.data[0].get("expires_at")
+            st.info(f"Plan actuel : **{plan}**" + (f" (expire le {expires[:10]})" if expires else ""))
+        else:
+            st.info("Plan actuel : **Gratuit**")
+    except Exception:
         st.info("Plan actuel : **Gratuit**")
 
     if st.button("Passer à Premium (10 000 KC)"):
-        wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
-        if wallet_res.data:
-            wallet_data = wallet_res.data[0]
-            current_balance = wallet_data["kongo_balance"]
-            if current_balance >= PREMIUM_PRICE:
-                try:
+        try:
+            wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
+            if wallet_res.data:
+                wallet_data = wallet_res.data[0]
+                current_balance = wallet_data["kongo_balance"]
+                if current_balance >= PREMIUM_PRICE:
                     new_balance = current_balance - PREMIUM_PRICE
                     supabase.table("wallets").update({
                         "kongo_balance": new_balance
@@ -1176,12 +1095,12 @@ def settings_page():
                     st.success(f"Compte Premium activé ! {PREMIUM_PRICE:,.0f} KC ont été débités.")
                     time.sleep(2)
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur lors de la transaction : {e}")
+                else:
+                    st.error(f"Solde insuffisant. Il vous manque {PREMIUM_PRICE - current_balance:,.0f} KC.")
             else:
-                st.error(f"Solde insuffisant. Il vous manque {PREMIUM_PRICE - current_balance:,.0f} KC.")
-        else:
-            st.error("Portefeuille introuvable. Veuillez d'abord initialiser votre Wallet.")
+                st.error("Portefeuille introuvable.")
+        except Exception as e:
+            st.error(f"Erreur lors de la transaction : {e}")
 
     st.divider()
     st.subheader("Paramètres TST (TTU-MC³)")
@@ -1212,86 +1131,98 @@ def admin_page():
 
     with tab1:
         st.subheader("Gestion des utilisateurs")
-        users = supabase.table("profiles").select("id, username, role, created_at").execute()
-        df_users = pd.DataFrame(users.data)
-        st.dataframe(df_users)
+        try:
+            users = supabase.table("profiles").select("id, username, role, created_at").execute()
+            df_users = pd.DataFrame(users.data)
+            st.dataframe(df_users)
 
-        with st.form("change_role"):
-            user_id = st.selectbox(
-                "Sélectionner un utilisateur",
-                options=df_users["id"],
-                format_func=lambda x: df_users[df_users["id"] == x]["username"].values[0]
-            )
-            new_role = st.selectbox("Nouveau rôle", ["user", "admin", "moderator"])
-            if st.form_submit_button("Appliquer"):
-                supabase.table("profiles").update({"role": new_role}).eq("id", user_id).execute()
-                supabase.table("admin_logs").insert({
-                    "admin_id": user.id,
-                    "action": "change_role",
-                    "target_type": "user",
-                    "target_id": user_id,
-                    "details": {"new_role": new_role}
-                }).execute()
-                st.success("Rôle mis à jour")
-                st.cache_data.clear()
-                st.rerun()
+            with st.form("change_role"):
+                user_id = st.selectbox(
+                    "Sélectionner un utilisateur",
+                    options=df_users["id"],
+                    format_func=lambda x: df_users[df_users["id"] == x]["username"].values[0]
+                )
+                new_role = st.selectbox("Nouveau rôle", ["user", "admin", "moderator"])
+                if st.form_submit_button("Appliquer"):
+                    supabase.table("profiles").update({"role": new_role}).eq("id", user_id).execute()
+                    supabase.table("admin_logs").insert({
+                        "admin_id": user.id,
+                        "action": "change_role",
+                        "target_type": "user",
+                        "target_id": user_id,
+                        "details": {"new_role": new_role}
+                    }).execute()
+                    st.success("Rôle mis à jour")
+                    st.cache_data.clear()
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Erreur chargement utilisateurs : {e}")
 
     with tab2:
         st.subheader("Posts signalés")
-        posts = supabase.table("posts").select("*, profiles(username)").order("created_at", desc=True).limit(100).execute()
-        for post in posts.data:
-            with st.expander(f"Post de {post['profiles']['username']} -- {post['created_at'][:16]}"):
-                st.write(post["text"])
-                if post.get("media_path"):
-                    file_url = get_signed_url("media", post["media_path"])
-                    if file_url:
-                        st.image(file_url, width=200)
-                if st.button("🗑️ Supprimer ce post", key=f"del_{post['id']}"):
-                    delete_post(post["id"])
-                    supabase.table("admin_logs").insert({
-                        "admin_id": user.id,
-                        "action": "delete_post",
-                        "target_type": "post",
-                        "target_id": str(post["id"]),
-                        "details": {}
-                    }).execute()
+        try:
+            posts = supabase.table("posts").select("*, profiles(username)").order("created_at", desc=True).limit(100).execute()
+            for post in posts.data:
+                with st.expander(f"Post de {post['profiles']['username']} -- {post['created_at'][:16]}"):
+                    st.write(post["text"])
+                    if post.get("media_path"):
+                        file_url = get_signed_url("media", post["media_path"])
+                        if file_url:
+                            st.image(file_url, width=200)
+                    if st.button("🗑️ Supprimer ce post", key=f"del_{post['id']}"):
+                        delete_post(post["id"])
+                        supabase.table("admin_logs").insert({
+                            "admin_id": user.id,
+                            "action": "delete_post",
+                            "target_type": "post",
+                            "target_id": str(post["id"]),
+                            "details": {}
+                        }).execute()
+        except Exception as e:
+            st.error(f"Erreur chargement posts : {e}")
 
     with tab3:
         st.subheader("Journal des actions")
-        logs = supabase.table("admin_logs").select("*, profiles!inner(username)").order("created_at", desc=True).limit(50).execute()
-        for log in logs.data:
-            st.text(f"{log['created_at']} - {log['profiles']['username']} : {log['action']} sur {log['target_type']} {log['target_id']}")
+        try:
+            logs = supabase.table("admin_logs").select("*, profiles!inner(username)").order("created_at", desc=True).limit(50).execute()
+            for log in logs.data:
+                st.text(f"{log['created_at']} - {log['profiles']['username']} : {log['action']} sur {log['target_type']} {log['target_id']}")
+        except Exception:
+            st.info("Aucun log pour l'instant.")
 
     with tab4:
         st.subheader("Créditer un utilisateur")
-        users = supabase.table("profiles").select("id, username").execute()
-        user_options = {u["id"]: u["username"] for u in users.data}
-        selected_user = st.selectbox(
-            "Choisir un utilisateur",
-            options=list(user_options.keys()),
-            format_func=lambda x: user_options[x]
-        )
-        amount = st.number_input("Montant (KC)", min_value=0.0, step=1000.0, value=100_000_000.0)
-        if st.button("Ajouter des KC"):
-            wallet = supabase.table("wallets").select("*").eq("user_id", selected_user).execute()
-            if wallet.data:
-                new_balance = wallet.data[0]["kongo_balance"] + amount
-                supabase.table("wallets").update({"kongo_balance": new_balance}).eq("user_id", selected_user).execute()
-            else:
-                supabase.table("wallets").insert({
-                    "user_id": selected_user,
-                    "kongo_balance": amount,
-                    "total_mined": 0.0,
-                    "last_reward_at": datetime.now().isoformat()
+        try:
+            users = supabase.table("profiles").select("id, username").execute()
+            user_options = {u["id"]: u["username"] for u in users.data}
+            selected_user = st.selectbox(
+                "Choisir un utilisateur",
+                options=list(user_options.keys()),
+                format_func=lambda x: user_options[x]
+            )
+            amount = st.number_input("Montant (KC)", min_value=0.0, step=1000.0, value=100_000_000.0)
+            if st.button("Ajouter des KC"):
+                wallet = supabase.table("wallets").select("*").eq("user_id", selected_user).execute()
+                if wallet.data:
+                    new_balance = wallet.data[0]["kongo_balance"] + amount
+                    supabase.table("wallets").update({"kongo_balance": new_balance}).eq("user_id", selected_user).execute()
+                else:
+                    supabase.table("wallets").insert({
+                        "user_id": selected_user,
+                        "kongo_balance": amount,
+                        "total_mined": 0.0,
+                        "last_reward_at": datetime.now().isoformat()
+                    }).execute()
+                supabase.table("admin_logs").insert({
+                    "admin_id": user.id,
+                    "action": "credit_kc",
+                    "target_type": "user",
+                    "target_id": selected_user,
+                    "details": {"amount": amount}
                 }).execute()
-            supabase.table("admin_logs").insert({
-                "admin_id": user.id,
-                "action": "credit_kc",
-                "target_type": "user",
-                "target_id": selected_user,
-                "details": {"amount": amount}
-            }).execute()
-            st.success(f"{amount:,.0f} KC ajoutés à {user_options[selected_user]}")
+                st.success(f"{amount:,.0f} KC ajoutés à {user_options[selected_user]}")
+        except Exception as e:
+            st.error(f"Erreur : {e}")
 
 # =====================================================
 # ROUTEUR PRINCIPAL

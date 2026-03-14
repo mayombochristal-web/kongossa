@@ -421,36 +421,7 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # PAGE TOKTOK (FLUX VERTICAL TTU) - VERSION STABLE
 # =====================================================
 def ttu_vertical_feed():
-    # CSS minimal et sécurisé
-    st.markdown("""
-        <style>
-            .ttu-panelist-avatar {
-                width: 50px;
-                height: 50px;
-                border-radius: 50%;
-                border: 2px solid #00FF00;
-                background-color: #333;
-                margin: 5px;
-            }
-            .ttu-panelist-muted { border-color: #FF0000; }
-            .ttu-gauge {
-                width: 30px;
-                height: 150px;
-                background: linear-gradient(to top, #00ff00, #ffff00, #ff0000);
-                border-radius: 15px;
-                margin: 20px 0;
-                position: relative;
-            }
-            .ttu-gauge-fill {
-                position: absolute;
-                bottom: 0;
-                width: 100%;
-                height: 50%;
-                background: rgba(0,0,0,0.5);
-                border-radius: 15px;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+    # Pas de CSS personnalisé, on utilise le layout natif de Streamlit
 
     # Caméra (pour lancer son live)
     st.subheader("📷 Lancer mon Live")
@@ -461,7 +432,6 @@ def ttu_vertical_feed():
             rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
             media_stream_constraints={"video": True, "audio": True},
         ),
-        video_html_attrs={"style": {"width": "100%", "margin-bottom": "20px"}},
     )
 
     # Récupération des panneaux actifs
@@ -478,6 +448,7 @@ def ttu_vertical_feed():
     if "ttu_index" not in st.session_state:
         st.session_state.ttu_index = 0
 
+    # Navigation
     col1, col2, col3 = st.columns([1, 10, 1])
     with col1:
         if st.button("⬆️", key="prev") and st.session_state.ttu_index > 0:
@@ -497,26 +468,27 @@ def ttu_vertical_feed():
     current = items[st.session_state.ttu_index]
     panel = current["data"]
 
-    # Contenu principal
+    # Contenu principal : 2 colonnes
     col_main, col_sidebar = st.columns([0.85, 0.15])
 
     with col_main:
         st.markdown(f"## {panel['title']}")
         st.markdown(f"Créé par {panel['profiles']['username']}")
 
-        # Affichage des panélistes (simulé)
+        # Affichage des panélistes (simulé) - avec des colonnes simples
         st.markdown("**Panélistes**")
-        cols = st.columns(5)
+        panelist_cols = st.columns(5)
         panelists = [
             {"name": "User1", "mic": True},
             {"name": "User2", "mic": False},
             {"name": "User3", "mic": True},
         ]
         for i, p in enumerate(panelists):
-            with cols[i]:
-                mic_class = "ttu-panelist-muted" if not p["mic"] else ""
-                st.markdown(f'<div class="ttu-panelist-avatar {mic_class}" title="{p["name"]}"></div>', unsafe_allow_html=True)
-                st.caption(p["name"])
+            with panelist_cols[i]:
+                if p["mic"]:
+                    st.markdown("🎤 " + p["name"])
+                else:
+                    st.markdown("🔇 " + p["name"])
 
         # Chat du panneau
         st.subheader("💬 Discussion")
@@ -525,14 +497,6 @@ def ttu_vertical_feed():
     with col_sidebar:
         st.image(panel['profiles'].get('profile_pic') or "https://via.placeholder.com/100", width=80)
         st.metric("Stabilité", f"{panel.get('current_stability', 1.0):.2f}")
-
-        # Jauge de stabilité
-        gauge_height = min(int(panel.get('current_stability', 1.0) * 50), 100)
-        st.markdown(f"""
-            <div class="ttu-gauge">
-                <div class="ttu-gauge-fill" style="height:{gauge_height}%;"></div>
-            </div>
-        """, unsafe_allow_html=True)
 
         if st.button("❤️ Like"):
             st.info("Like (simulé)")

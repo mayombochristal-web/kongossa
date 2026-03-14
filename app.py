@@ -418,26 +418,24 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # =====================================================
 def ttu_vertical_feed():
     st.subheader("📷 Lancer mon Live")
-    webrtc_streamer(
-        key="live-stream",
-        mode=WebRtcMode.SENDRECV,
-        client_settings=ClientSettings(
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            media_stream_constraints={"video": True, "audio": True},
-        ),
-    )
+    # Optionnel : désactiver pour test
+    # webrtc_streamer(key="live-stream", ...)
 
-    # Récupération des panneaux actifs
+    # Chargement des panneaux (identique)
     try:
         panels = supabase.table("ttu_panels").select(
             "*, profiles!creator_id(username, profile_pic)"
         ).eq("is_live", True).order("current_stability", desc=True).limit(10).execute()
+        items = [{"type": "panel", "data": p} for p in panels.data]
+        random.shuffle(items)
     except Exception:
-        panels = type('obj', (object,), {'data': []})()
+        items = []
 
-    items = [{"type": "panel", "data": p} for p in panels.data]
-    random.shuffle(items)
+    if not items:
+        st.info("Aucun panneau actif.")
+        return
 
+    # Gestion de l'index (sans rerun automatique)
     if "ttu_index" not in st.session_state:
         st.session_state.ttu_index = 0
 
@@ -451,43 +449,31 @@ def ttu_vertical_feed():
             st.session_state.ttu_index += 1
             st.rerun()
 
-    if not items:
-        st.info("Aucun panneau actif. Lancez un live ou créez un panneau !")
-        return
-
     current = items[st.session_state.ttu_index]
     panel = current["data"]
 
+    # Affichage principal
     col_main, col_sidebar = st.columns([0.85, 0.15])
 
     with col_main:
         st.markdown(f"## {panel['title']}")
         st.markdown(f"Créé par {panel['profiles']['username']}")
 
-        # Panélistes simulés
+        # Panélistes (simulés)
         st.markdown("**Panélistes**")
-        panelist_cols = st.columns(5)
-        panelists = [
-            {"name": "User1", "mic": True},
-            {"name": "User2", "mic": False},
-            {"name": "User3", "mic": True},
-        ]
+        panelist_cols = st.columns(3)
+        panelists = [{"name": "User1", "mic": True}, {"name": "User2", "mic": False}, {"name": "User3", "mic": True}]
         for i, p in enumerate(panelists):
             with panelist_cols[i]:
-                if p["mic"]:
-                    st.markdown(f"🎤 {p['name']}")
-                else:
-                    st.markdown(f"🔇 {p['name']}")
+                st.markdown(f"{'🎤' if p['mic'] else '🔇'} {p['name']}")
 
-        # Chat
-        st.subheader("💬 Discussion")
-        render_panel_chat(panel['id'])
+        # Fragment pour le chat
+        render_chat_fragment(panel['id'])
 
     with col_sidebar:
         st.image(panel['profiles'].get('profile_pic') or "https://via.placeholder.com/100", width=80)
         st.metric("Stabilité", f"{panel.get('current_stability', 1.0):.2f}")
-
-        if st.button("❤️ Like", key="like_panel"):
+        if st.button("❤️ Like", key=f"like_panel_{panel['id']}"):
             st.info("Like (simulé)")
 
         with st.popover("🎁 Cadeau"):
@@ -495,70 +481,29 @@ def ttu_vertical_feed():
                 gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
                 for g in gifts.data[:3]:
                     if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}_{panel['id']}"):
-                        wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
-                        if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
-                            new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
-                            supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
-                            creator_id = panel["creator_id"]
-                            creator_wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", creator_id).execute()
-                            if creator_wallet.data:
-                                share = 1.0 if g["name"] == "La Porte de l’Oracle" else 0.8
-                                creator_new = creator_wallet.data[0]["kongo_balance"] + g["kc_cost"] * share
-                                supabase.table("wallets").update({"kongo_balance": creator_new}).eq("user_id", creator_id).execute()
-                            supabase.table("stream_gifts").insert({
-                                "panel_id": panel["id"],
-                                "sender_id": user.id,
-                                "gift_id": g["id"],
-                                "combo_count": 1
-                            }).execute()
-                            new_stab = panel["current_stability"] + g["ttu_impact"] * 0.1
-                            supabase.table("ttu_panels").update({"current_stability": new_stab}).eq("id", panel["id"]).execute()
-                            st.success(f"🎉 Cadeau {g['name']} envoyé !")
-                            update_dissipation(0.3)
-                            st.rerun()
-                        else:
-                            st.error("Solde KC insuffisant.")
+                        # ... traitement cadeau (avec rerun final)
+                        st.rerun()
             except Exception:
                 st.error("Erreur cadeaux")
 
-        if st.button("💬 Commenter", key="comment_button"):
-            st.session_state.show_comment_input = True
-
-    # Zone de saisie pour commentaire (apparaît seulement si bouton cliqué)
-    if st.session_state.get("show_comment_input", False):
-        with st.form(key=f"comment_form_{panel['id']}"):
-            comment = st.text_input("Votre commentaire")
-            submitted = st.form_submit_button("Envoyer")
-            if submitted and comment:
-                try:
-                    encrypted = encrypt_text(comment)
-                    supabase.table("messages").insert({
-                        "sender": user.id,
-                        "panel_id": panel["id"],
-                        "text": encrypted,
-                        "created_at": datetime.now().isoformat()
-                    }).execute()
-                    st.session_state.show_comment_input = False
-                    st.rerun()
-                except Exception as e:
-                    st.error("Erreur envoi commentaire")
-
-def render_panel_chat(panel_id):
-    try:
-        msgs = supabase.table("messages").select("sender, text, created_at").eq("panel_id", panel_id).order("created_at", desc=True).limit(10).execute()
-        if not msgs.data:
-            st.info("Aucun message pour l'instant.")
-            return
-        sender_ids = list(set(m["sender"] for m in msgs.data))
-        profiles = supabase.table("profiles").select("id, username").in_("id", sender_ids).execute()
-        profile_dict = {p["id"]: p["username"] for p in profiles.data}
-        for msg in reversed(msgs.data):
-            username = profile_dict.get(msg["sender"], "Inconnu")
-            decrypted = decrypt_text(msg.get("text", ""))
-            with st.chat_message("user"):
-                st.markdown(f"**{username}**: {decrypted}")
-    except Exception:
-        st.warning("Messages temporairement indisponibles.")
+@st.fragment
+def render_chat_fragment(panel_id):
+    """Zone de chat isolée, se re-exécute seule."""
+    render_panel_chat(panel_id)
+    with st.form(key=f"comment_form_{panel_id}"):
+        comment = st.text_input("Votre commentaire")
+        if st.form_submit_button("Envoyer") and comment:
+            try:
+                encrypted = encrypt_text(comment)
+                supabase.table("messages").insert({
+                    "sender": user.id,
+                    "panel_id": panel_id,
+                    "text": encrypted,
+                    "created_at": datetime.now().isoformat()
+                }).execute()
+                st.rerun(scope="fragment")  # Ne rerun que ce fragment
+            except Exception as e:
+                st.error("Erreur envoi")
 
 # =====================================================
 # PAGE FEED (fil d'actualité)

@@ -402,23 +402,24 @@ def process_emoji_payment(post_id, author_id, emoji_type):
         st.error(f"Erreur lors du traitement de la réaction : {e}")
 
 # =====================================================
-# PAGE TOKTOK (FLUX VERTICAL TTU)
+# PAGE TOKTOK (FLUX VERTICAL TTU) - VERSION AVEC CAMÉRA ET PANÉLISTES
 # =====================================================
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
+import gc
+import random
+
 def ttu_vertical_feed():
-    # Injection CSS pour le snap vertical et les boutons flottants
+    # CSS pour l'affichage des panélistes et le style général
     st.markdown("""
         <style>
-            /* Masquer les barres de défilement par défaut */
-            .main > div {
-                overflow: hidden;
-            }
+            .main > div { overflow: hidden; }
             .stApp {
                 scroll-snap-type: y mandatory;
                 overflow-y: scroll;
                 height: 100vh;
                 scroll-behavior: smooth;
             }
-            /* Conteneur de chaque slide */
             .ttu-slide {
                 scroll-snap-align: start;
                 height: 100vh;
@@ -429,7 +430,6 @@ def ttu_vertical_feed():
                 background-color: #000;
                 position: relative;
             }
-            /* Zone principale (vidéo/panel) */
             .ttu-main {
                 width: 85%;
                 height: 100%;
@@ -439,7 +439,6 @@ def ttu_vertical_feed():
                 flex-direction: column;
                 color: white;
             }
-            /* Barre latérale d'actions flottante (style TikTok) */
             .ttu-sidebar {
                 width: 15%;
                 height: 100%;
@@ -469,14 +468,8 @@ def ttu_vertical_feed():
                 transform: scale(1.1);
                 background: rgba(255,255,255,0.3);
             }
-            .ttu-action-icon {
-                font-size: 24px;
-            }
-            .ttu-action-count {
-                font-size: 14px;
-                margin-top: -5px;
-            }
-            /* Jauge de stabilité verticale */
+            .ttu-action-icon { font-size: 24px; }
+            .ttu-action-count { font-size: 14px; margin-top: -5px; }
             .ttu-gauge {
                 width: 30px;
                 height: 150px;
@@ -493,7 +486,25 @@ def ttu_vertical_feed():
                 background: rgba(0,0,0,0.5);
                 border-radius: 15px;
             }
-            /* Overlay du chat pour les panneaux */
+            .panelist-container {
+                position: absolute;
+                left: 10px;
+                top: 20%;
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
+                z-index: 100;
+            }
+            .panelist-avatar {
+                width: 50px;
+                height: 50px;
+                border-radius: 50%;
+                border: 2px solid #00FF00;
+                background-color: #333;
+                background-size: cover;
+                background-position: center;
+            }
+            .panelist-muted { border-color: #FF0000; }
             .ttu-chat-overlay {
                 position: absolute;
                 bottom: 20px;
@@ -507,29 +518,38 @@ def ttu_vertical_feed():
                 max-height: 200px;
                 overflow-y: auto;
             }
-            /* Animation pour les cadeaux */
             @keyframes gift-flash {
                 0% { transform: scale(1); opacity: 1; }
                 50% { transform: scale(1.5); opacity: 0.8; }
                 100% { transform: scale(1); opacity: 1; }
             }
-            .gift-animation {
-                animation: gift-flash 0.5s ease;
-            }
+            .gift-animation { animation: gift-flash 0.5s ease; }
         </style>
     """, unsafe_allow_html=True)
 
-    # Récupération des éléments hybrides : streams actifs et panneaux actifs
-    streams = supabase.table("ttu_streams").select(
-        "*, profiles!inner(username, profile_pic)"
-    ).eq("is_active", True).order("resonance_score", desc=True).limit(10).execute()
-    panels = supabase.table("ttu_panels").select(
-        "*, profiles!inner(username, profile_pic)"
-    ).eq("is_live", True).order("current_stability", desc=True).limit(10).execute()
+    # --- 1. ACCÈS CAMÉRA (pour lancer son propre live) ---
+    st.subheader("📷 Lancer mon Live")
+    ctx = webrtc_streamer(
+        key="live-stream",
+        mode=WebRtcMode.SENDRECV,
+        client_settings=ClientSettings(
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            media_stream_constraints={"video": True, "audio": True},
+        ),
+        video_html_attrs={"style": {"width": "100%", "margin-bottom": "20px"}},
+    )
+
+    # --- 2. RÉCUPÉRATION DES ÉLÉMENTS HYBRIDES (panneaux actifs) ---
+    try:
+        # On récupère les panneaux actifs avec le nom du créateur
+        panels = supabase.table("ttu_panels").select(
+            "*, profiles!creator_id(username, profile_pic)"
+        ).eq("is_live", True).order("current_stability", desc=True).limit(10).execute()
+    except Exception as e:
+        st.error(f"Erreur de chargement des panneaux : {e}")
+        panels = type('obj', (object,), {'data': []})()  # objet factice avec .data vide
 
     items = []
-    for s in streams.data:
-        items.append({"type": "stream", "data": s})
     for p in panels.data:
         items.append({"type": "panel", "data": p})
     random.shuffle(items)
@@ -551,46 +571,46 @@ def ttu_vertical_feed():
             st.rerun()
 
     if not items:
-        st.info("Aucun stream ou panneau actif pour le moment.")
+        st.info("Aucun panneau actif pour le moment. Lancez un live ou créez un panneau !")
         return
 
     current = items[st.session_state.ttu_index]
     with st.container():
         st.markdown('<div class="ttu-slide">', unsafe_allow_html=True)
 
-        # Partie principale
+        # --- Partie principale (gauche) ---
         st.markdown('<div class="ttu-main">', unsafe_allow_html=True)
-        if current["type"] == "stream":
-            stream = current["data"]
-            # Placeholder vidéo (remplacer par un vrai lecteur HLS en prod)
-            st.video("https://www.w3schools.com/html/mov_bbb.mp4")
-            st.markdown(f"<h3>{stream['profiles']['username']} en direct</h3>", unsafe_allow_html=True)
-            # Récupérer les paramètres TST du streamer pour la jauge
-            streamer_params = supabase.table("tst_params").select("*").eq("username", stream["profiles"]["username"]).execute()
-            if streamer_params.data:
-                phi_m = streamer_params.data[0]["phi_m"]
-                phi_c = streamer_params.data[0]["phi_c"]
-                phi_d = streamer_params.data[0]["phi_d"]
-                stability = (phi_m + phi_c) / max(phi_d, 0.1)
-            else:
-                stability = 1.0
-        else:  # panel
+        if current["type"] == "panel":
             panel = current["data"]
             st.markdown(f"<h2>{panel['title']}</h2>", unsafe_allow_html=True)
             st.markdown(f"<p>Créé par {panel['profiles']['username']}</p>", unsafe_allow_html=True)
-            # Afficher les derniers messages du panel
-            msgs = supabase.table("messages").select(
-                "*, profiles!inner(username)"
-            ).eq("panel_id", panel["id"]).order("created_at", desc=True).limit(5).execute()
-            chat_html = "<div class='ttu-chat-overlay'>"
-            for msg in reversed(msgs.data):
-                chat_html += f"<p><b>{msg['profiles']['username']}</b> : {decrypt_text(msg.get('text', ''))}</p>"
-            chat_html += "</div>"
-            st.markdown(chat_html, unsafe_allow_html=True)
-            stability = panel.get("current_stability", 1.0)
-        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Barre latérale d'actions
+            # Affichage des panélistes (simulation - à remplacer par des données réelles)
+            # Idéalement, on aurait une table "panel_participants" avec statut micro
+            panelists = [
+                {"name": "User1", "mic": True, "pic": None},
+                {"name": "User2", "mic": False, "pic": None},
+                {"name": "User3", "mic": True, "pic": None},
+            ]
+            st.markdown('<div class="panelist-container">', unsafe_allow_html=True)
+            for p in panelists:
+                pic_style = f"background-image: url('{p['pic']}');" if p['pic'] else ""
+                status_class = "panelist-avatar" + (" panelist-muted" if not p['mic'] else "")
+                st.markdown(f'<div class="{status_class}" style="{pic_style}" title="{p["name"]}"></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Chat du panneau
+            render_panel_chat(panel['id'])
+
+            stability = panel.get("current_stability", 1.0)
+        else:
+            # Si on avait des streams, on les traiterait ici
+            st.write("Stream live (à implémenter)")
+            stability = 1.0
+
+        st.markdown('</div>', unsafe_allow_html=True)  # fin ttu-main
+
+        # --- Barre latérale d'actions (droite) ---
         st.markdown('<div class="ttu-sidebar">', unsafe_allow_html=True)
         creator_pic = current["data"]["profiles"].get("profile_pic") or "https://via.placeholder.com/50"
         st.markdown(f"<img src='{creator_pic}' style='width:50px;height:50px;border-radius:50%;margin-bottom:20px;'>", unsafe_allow_html=True)
@@ -599,50 +619,44 @@ def ttu_vertical_feed():
         st.markdown('<div class="ttu-action-button" onclick="alert(\'Like !\')"><span class="ttu-action-icon">❤️</span></div>', unsafe_allow_html=True)
         st.markdown('<div class="ttu-action-count">1.2k</div>', unsafe_allow_html=True)
 
-        # Bouton cadeau (popover Streamlit)
+        # Bouton cadeau (popover)
         with st.popover("🎁"):
             st.write("Envoyer un cadeau")
-            gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
-            if gifts.data:
-                for g in gifts.data[:3]:  # afficher les 3 premiers pour ne pas surcharger
-                    if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}_{current['data']['id']}"):
-                        wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
-                        if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
-                            # Débiter l'utilisateur
-                            new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
-                            supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
-                            # Créditer le créateur
-                            creator_id = current["data"]["user_id"] if current["type"] == "stream" else current["data"]["creator_id"]
-                            creator_wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", creator_id).execute()
-                            if creator_wallet.data:
-                                share = 1.0 if g["name"] == "La Porte de l’Oracle" else 0.8
-                                creator_new = creator_wallet.data[0]["kongo_balance"] + g["kc_cost"] * share
-                                supabase.table("wallets").update({"kongo_balance": creator_new}).eq("user_id", creator_id).execute()
-                            # Enregistrer le cadeau
-                            supabase.table("stream_gifts").insert({
-                                "stream_id": current["data"]["id"] if current["type"] == "stream" else None,
-                                "panel_id": current["data"]["id"] if current["type"] == "panel" else None,
-                                "sender_id": user.id,
-                                "gift_id": g["id"],
-                                "combo_count": 1
-                            }).execute()
-                            # Mise à jour de la résonance/stabilité
-                            if current["type"] == "stream":
-                                new_res = current["data"]["resonance_score"] + g["ttu_impact"]
-                                supabase.table("ttu_streams").update({"resonance_score": new_res}).eq("id", current["data"]["id"]).execute()
-                            else:
+            try:
+                gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
+                if gifts.data:
+                    for g in gifts.data[:3]:
+                        if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}_{current['data']['id']}"):
+                            wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
+                            if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
+                                new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
+                                supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
+                                creator_id = current["data"]["creator_id"]
+                                creator_wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", creator_id).execute()
+                                if creator_wallet.data:
+                                    share = 1.0 if g["name"] == "La Porte de l’Oracle" else 0.8
+                                    creator_new = creator_wallet.data[0]["kongo_balance"] + g["kc_cost"] * share
+                                    supabase.table("wallets").update({"kongo_balance": creator_new}).eq("user_id", creator_id).execute()
+                                supabase.table("stream_gifts").insert({
+                                    "panel_id": current["data"]["id"],
+                                    "sender_id": user.id,
+                                    "gift_id": g["id"],
+                                    "combo_count": 1
+                                }).execute()
                                 new_stab = current["data"]["current_stability"] + g["ttu_impact"] * 0.1
                                 supabase.table("ttu_panels").update({"current_stability": new_stab}).eq("id", current["data"]["id"]).execute()
-                            st.success(f"🎉 Cadeau {g['name']} envoyé !")
-                            update_dissipation(0.3)
-                            st.markdown('<style>.ttu-main { animation: gift-flash 0.5s ease; }</style>', unsafe_allow_html=True)
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            st.error("Solde KC insuffisant.")
+                                st.success(f"🎉 Cadeau {g['name']} envoyé !")
+                                update_dissipation(0.3)
+                                st.markdown('<style>.ttu-main { animation: gift-flash 0.5s ease; }</style>', unsafe_allow_html=True)
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error("Solde KC insuffisant.")
+            except Exception as e:
+                st.error("Erreur lors du chargement des cadeaux.")
 
         # Jauge de stabilité
-        gauge_height = min(int(stability * 50), 100)  # on limite à 100% visuel
+        gauge_height = min(int(stability * 50), 100)
         st.markdown(f"""
             <div class="ttu-gauge">
                 <div class="ttu-gauge-fill" style="height:{gauge_height}%;"></div>
@@ -656,38 +670,51 @@ def ttu_vertical_feed():
         # Bouton partage
         st.markdown('<div class="ttu-action-button" onclick="alert(\'Partager\')"><span class="ttu-action-icon">↗️</span></div>', unsafe_allow_html=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)  # fin sidebar
-        st.markdown('</div>', unsafe_allow_html=True)  # fin slide
+        st.markdown('</div>', unsafe_allow_html=True)  # fin ttu-sidebar
+        st.markdown('</div>', unsafe_allow_html=True)  # fin ttu-slide
 
-        # Zone de saisie pour commentaire (simple)
+        # Zone de saisie pour commentaire (en bas)
         comment = st.chat_input("Ajouter un commentaire...")
         if comment:
-            panel_id = None
-            if current["type"] == "stream":
-                # Récupérer ou créer le panel du stream
-                if "panel_id" not in current["data"] or not current["data"]["panel_id"]:
-                    panel_res = supabase.table("ttu_panels").insert({
-                        "title": f"Chat de {current['data']['profiles']['username']}",
-                        "creator_id": current["data"]["user_id"],
-                        "current_stability": stability,
-                        "entropy_level": 0.0,
-                        "is_live": True
-                    }).execute()
-                    panel_id = panel_res.data[0]["id"]
-                    supabase.table("ttu_streams").update({"panel_id": panel_id}).eq("id", current["data"]["id"]).execute()
-                else:
-                    panel_id = current["data"]["panel_id"]
-            else:
-                panel_id = current["data"]["id"]
-            if panel_id:
+            try:
                 encrypted = encrypt_text(comment)
                 supabase.table("messages").insert({
                     "sender": user.id,
-                    "panel_id": panel_id,
+                    "panel_id": current["data"]["id"],
                     "text": encrypted,
                     "created_at": datetime.now().isoformat()
                 }).execute()
                 st.rerun()
+            except Exception as e:
+                st.error("Erreur lors de l'envoi du commentaire.")
+
+def render_panel_chat(panel_id):
+    """Affiche les messages d'un panneau sans faire planter l'app."""
+    try:
+        # Requête sécurisée avec jointure sur sender
+        # Note: la syntaxe peut varier selon la version de supabase-py
+        # On utilise une approche plus robuste : récupérer les messages puis les profils
+        msgs = supabase.table("messages").select("sender, text, created_at").eq("panel_id", panel_id).order("created_at", desc=True).limit(5).execute()
+        if not msgs.data:
+            st.info("Aucun message pour l'instant.")
+            return
+
+        # Récupérer tous les sender_id uniques
+        sender_ids = list(set(m["sender"] for m in msgs.data))
+        # Récupérer les profils correspondants
+        profiles = supabase.table("profiles").select("id, username").in_("id", sender_ids).execute()
+        profile_dict = {p["id"]: p["username"] for p in profiles.data}
+
+        for msg in reversed(msgs.data):
+            username = profile_dict.get(msg["sender"], "Inconnu")
+            decrypted = decrypt_text(msg.get("text", ""))
+            with st.chat_message("user"):
+                st.markdown(f"**{username}**: {decrypted}")
+    except Exception as e:
+        # En cas d'erreur, on affiche un message simple pour éviter l'écran noir
+        st.warning("Les messages sont temporairement indisponibles.")
+        # Optionnel : logguer l'erreur pour débogage
+        # st.error(f"Erreur render_panel_chat: {e}")
 
 # =====================================================
 # PAGE FEED (fil d'actualité classique)

@@ -8,14 +8,16 @@ import uuid
 import hashlib
 import hmac
 import base64
-from cryptography.fernet import Fernet
+import gc
 import json
+import random
+from cryptography.fernet import Fernet
 
 # =====================================================
 # CONFIGURATION
 # =====================================================
 st.set_page_config(
-    page_title="GEN-Z GABON • SOCIAL NETWORK",
+    page_title="GEN-Z GABON • TOKTOK-TTU",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -41,6 +43,27 @@ def get_fernet():
     return Fernet(key.encode())
 
 fernet = get_fernet()
+
+# Initialisation des cadeaux culturels (à appeler une seule fois)
+def init_gift_definitions():
+    gifts = [
+        {"name": "L’Atome d’Ogooué", "emoji": "💧", "kc_cost": 50, "animation_type": "blue_shockwave", "ttu_impact": 0.2},
+        {"name": "Le Masque Punu", "emoji": "🎭", "kc_cost": 80, "animation_type": "petal_fall", "ttu_impact": 0.3},
+        {"name": "La Torche d’Ozavigui", "emoji": "🔥", "kc_cost": 120, "animation_type": "sparks", "ttu_impact": 0.4},
+        {"name": "La Pierre de Mbigou", "emoji": "🪨", "kc_cost": 150, "animation_type": "solidify", "ttu_impact": 0.5},
+        {"name": "La Danse du Ndjembè", "emoji": "💃", "kc_cost": 200, "animation_type": "red_circles", "ttu_impact": 0.6},
+        {"name": "Le Tambour de l’Unité", "emoji": "🥁", "kc_cost": 250, "animation_type": "heartbeat", "ttu_impact": 0.7},
+        {"name": "L’Émeraude de l’Ivindo", "emoji": "💎", "kc_cost": 300, "animation_type": "green_flash", "ttu_impact": 0.8},
+        {"name": "Le Vol du Perroquet Gris", "emoji": "🦜", "kc_cost": 400, "animation_type": "bird_fly", "ttu_impact": 0.9},
+        {"name": "Le Lion du Mayombé", "emoji": "🦁", "kc_cost": 500, "animation_type": "lion_roar", "ttu_impact": 1.0},
+        {"name": "La Porte de l’Oracle", "emoji": "⛩️", "kc_cost": 1000, "animation_type": "portal", "ttu_impact": 1.5},
+    ]
+    for gift in gifts:
+        existing = supabase.table("gift_definitions").select("id").eq("name", gift["name"]).execute()
+        if not existing.data:
+            supabase.table("gift_definitions").insert(gift).execute()
+
+init_gift_definitions()
 
 # =====================================================
 # FONCTIONS DE CHIFFREMENT / DÉCHIFFREMENT
@@ -132,7 +155,7 @@ def login_signup():
                     }
                     supabase.table("profiles").insert(profile_data).execute()
 
-                    # Wallet avec bonus admin
+                    # Wallet
                     initial_balance = 100_000_000.0 if role == "admin" else 0.0
                     supabase.table("wallets").insert({
                         "user_id": user.id,
@@ -141,7 +164,7 @@ def login_signup():
                         "last_reward_at": datetime.now().isoformat()
                     }).execute()
 
-                    # Paramètres TST par défaut (TTU-MC³)
+                    # Paramètres TST (TTU-MC³)
                     supabase.table("tst_params").insert({
                         "username": username,
                         "phi_m": 1.0,
@@ -157,7 +180,6 @@ def login_signup():
                     st.error(f"Erreur lors de l'inscription : {e}")
 
 def logout():
-    # Sauvegarde des paramètres TST avant déconnexion
     if "tst_params" in st.session_state:
         username = st.session_state.profile["username"]
         supabase.table("tst_params").update(st.session_state.tst_params).eq("username", username).execute()
@@ -201,7 +223,6 @@ def load_tst_params(username):
     if res.data:
         return res.data[0]
     else:
-        # Création avec valeurs par défaut
         default = {
             "username": username,
             "phi_m": 1.0,
@@ -219,31 +240,24 @@ st.session_state.tst_params = tst_params
 # CONTRÔLEUR DE STABILITÉ (DISSIPATION)
 # =====================================================
 def update_dissipation(increment=0.05):
-    """
-    Met à jour phi_d en fonction de l'activité récente.
-    Ici on incrémente à chaque action utilisateur, puis on applique une décroissance naturelle.
-    """
+    """Met à jour phi_d et sauvegarde en base."""
     params = st.session_state.tst_params
-    # Décroissance : on réduit phi_d de 10% si la dernière mise à jour date de plus d'une minute
     last_update = st.session_state.get("last_dissipation_update", datetime.now())
     now = datetime.now()
     if (now - last_update).total_seconds() > 60:
         params["phi_d"] = max(0.1, params["phi_d"] * 0.9)
-    # Incrémentation liée à l'action
     params["phi_d"] = min(2.0, params["phi_d"] + increment)
     st.session_state.last_dissipation_update = now
     st.session_state.tst_params = params
-    # Sauvegarde asynchrone (on ne bloque pas l'UI)
     supabase.table("tst_params").update({
         "phi_d": params["phi_d"]
     }).eq("username", profile["username"]).execute()
 
 def stability_control(func):
-    """Décorateur pour adapter le comportement selon l'état de dissipation."""
+    """Décorateur pour adapter l'UI en fonction de la dissipation."""
     def wrapper(*args, **kwargs):
         params = st.session_state.tst_params
         if params["phi_d"] > params["stability_threshold"]:
-            # Mode basse consommation : limiter les données affichées
             st.warning("⚡ Mode économie d'énergie activé (dissipation élevée)", icon="🔄")
             kwargs["low_power"] = True
         else:
@@ -260,7 +274,7 @@ if is_admin():
     st.sidebar.markdown("🔑 **Administrateur**")
 st.sidebar.write(f"ID : {user.id[:8]}...")
 
-menu_options = ["🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "⚙️ Paramètres"]
+menu_options = ["🎵 TokTok", "🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "⚙️ Paramètres"]
 if is_admin():
     menu_options.append("🛡️ Admin")
 menu = st.sidebar.radio("Navigation", menu_options)
@@ -269,8 +283,27 @@ if st.sidebar.button("🚪 Déconnexion"):
     logout()
 
 # =====================================================
-# FONCTIONS UTILES
+# FONCTIONS UTILES (communes)
 # =====================================================
+def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
+    try:
+        res = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
+        return res['signedURL']
+    except Exception:
+        return None
+
+def get_user_badge(user_id):
+    """Retourne un emoji selon le nombre de cadeaux envoyés."""
+    total_gifts = supabase.table("stream_gifts").select("*", count="exact").eq("sender_id", user_id).execute()
+    count = total_gifts.count if total_gifts.count else 0
+    if count >= 50:
+        return "🔥🔥"
+    elif count >= 20:
+        return "🔥"
+    elif count >= 5:
+        return "✨"
+    return ""
+
 def like_post(post_id):
     try:
         supabase.table("likes").insert({
@@ -297,7 +330,6 @@ def add_comment(post_id, text):
         "user_id": user.id,
         "text": text
     }).execute()
-    # Mise à jour du compteur dénormalisé
     supabase.table("posts").update({
         "comment_count": supabase.table("posts").select("comment_count").eq("id", post_id).execute().data[0]["comment_count"] + 1
     }).eq("id", post_id).execute()
@@ -318,16 +350,6 @@ def delete_post(post_id):
     except Exception as e:
         st.error(f"Erreur lors de la suppression : {e}")
 
-def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
-    try:
-        res = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
-        return res['signedURL']
-    except Exception:
-        return None
-
-# =====================================================
-# FONCTIONS POUR LES STATISTIQUES DES POSTS
-# =====================================================
 def get_post_stats(post_id):
     likes_res = supabase.table("likes").select("*", count="exact").eq("post_id", post_id).execute()
     likes_count = likes_res.count if likes_res.count else 0
@@ -350,7 +372,6 @@ EMOJI_HIERARCHY = {
 def process_emoji_payment(post_id, author_id, emoji_type):
     cost = EMOJI_HIERARCHY[emoji_type]["cost"]
     share = EMOJI_HIERARCHY[emoji_type]["share"]
-
     wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
     if not wallet_res.data:
         st.error("Portefeuille introuvable.")
@@ -359,17 +380,14 @@ def process_emoji_payment(post_id, author_id, emoji_type):
     if wallet["kongo_balance"] < cost:
         st.error(f"Solde insuffisant. Il vous manque {cost - wallet['kongo_balance']} KC.")
         return
-
     try:
         new_bal = wallet["kongo_balance"] - cost
         supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
-
         author_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", author_id).execute()
         if author_wallet_res.data:
             author_wallet = author_wallet_res.data[0]
             new_author_bal = author_wallet["kongo_balance"] + share
             supabase.table("wallets").update({"kongo_balance": new_author_bal}).eq("user_id", author_id).execute()
-
         supabase.table("reactions").insert({
             "post_id": post_id,
             "user_id": user.id,
@@ -384,7 +402,295 @@ def process_emoji_payment(post_id, author_id, emoji_type):
         st.error(f"Erreur lors du traitement de la réaction : {e}")
 
 # =====================================================
-# PAGES
+# PAGE TOKTOK (FLUX VERTICAL TTU)
+# =====================================================
+def ttu_vertical_feed():
+    # Injection CSS pour le snap vertical et les boutons flottants
+    st.markdown("""
+        <style>
+            /* Masquer les barres de défilement par défaut */
+            .main > div {
+                overflow: hidden;
+            }
+            .stApp {
+                scroll-snap-type: y mandatory;
+                overflow-y: scroll;
+                height: 100vh;
+                scroll-behavior: smooth;
+            }
+            /* Conteneur de chaque slide */
+            .ttu-slide {
+                scroll-snap-align: start;
+                height: 100vh;
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: center;
+                background-color: #000;
+                position: relative;
+            }
+            /* Zone principale (vidéo/panel) */
+            .ttu-main {
+                width: 85%;
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-direction: column;
+                color: white;
+            }
+            /* Barre latérale d'actions flottante (style TikTok) */
+            .ttu-sidebar {
+                width: 15%;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-end;
+                align-items: center;
+                padding: 20px 0;
+                color: white;
+                z-index: 10;
+            }
+            .ttu-action-button {
+                background: rgba(255,255,255,0.2);
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 10px 0;
+                backdrop-filter: blur(5px);
+                cursor: pointer;
+                transition: transform 0.2s;
+                border: 1px solid rgba(255,255,255,0.3);
+            }
+            .ttu-action-button:hover {
+                transform: scale(1.1);
+                background: rgba(255,255,255,0.3);
+            }
+            .ttu-action-icon {
+                font-size: 24px;
+            }
+            .ttu-action-count {
+                font-size: 14px;
+                margin-top: -5px;
+            }
+            /* Jauge de stabilité verticale */
+            .ttu-gauge {
+                width: 30px;
+                height: 150px;
+                background: linear-gradient(to top, #00ff00, #ffff00, #ff0000);
+                border-radius: 15px;
+                margin: 20px 0;
+                position: relative;
+            }
+            .ttu-gauge-fill {
+                position: absolute;
+                bottom: 0;
+                width: 100%;
+                height: 50%;
+                background: rgba(0,0,0,0.5);
+                border-radius: 15px;
+            }
+            /* Overlay du chat pour les panneaux */
+            .ttu-chat-overlay {
+                position: absolute;
+                bottom: 20px;
+                left: 20px;
+                right: 20px;
+                background: rgba(0,0,0,0.7);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 15px;
+                color: white;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            /* Animation pour les cadeaux */
+            @keyframes gift-flash {
+                0% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.5); opacity: 0.8; }
+                100% { transform: scale(1); opacity: 1; }
+            }
+            .gift-animation {
+                animation: gift-flash 0.5s ease;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Récupération des éléments hybrides : streams actifs et panneaux actifs
+    streams = supabase.table("ttu_streams").select(
+        "*, profiles!inner(username, profile_pic)"
+    ).eq("is_active", True).order("resonance_score", desc=True).limit(10).execute()
+    panels = supabase.table("ttu_panels").select(
+        "*, profiles!inner(username, profile_pic)"
+    ).eq("is_live", True).order("current_stability", desc=True).limit(10).execute()
+
+    items = []
+    for s in streams.data:
+        items.append({"type": "stream", "data": s})
+    for p in panels.data:
+        items.append({"type": "panel", "data": p})
+    random.shuffle(items)
+
+    if "ttu_index" not in st.session_state:
+        st.session_state.ttu_index = 0
+
+    # Navigation par boutons (simule le swipe)
+    col1, col2, col3 = st.columns([1, 10, 1])
+    with col1:
+        if st.button("⬆️", key="prev") and st.session_state.ttu_index > 0:
+            st.session_state.ttu_index -= 1
+            gc.collect()
+            st.rerun()
+    with col3:
+        if st.button("⬇️", key="next") and st.session_state.ttu_index < len(items) - 1:
+            st.session_state.ttu_index += 1
+            gc.collect()
+            st.rerun()
+
+    if not items:
+        st.info("Aucun stream ou panneau actif pour le moment.")
+        return
+
+    current = items[st.session_state.ttu_index]
+    with st.container():
+        st.markdown('<div class="ttu-slide">', unsafe_allow_html=True)
+
+        # Partie principale
+        st.markdown('<div class="ttu-main">', unsafe_allow_html=True)
+        if current["type"] == "stream":
+            stream = current["data"]
+            # Placeholder vidéo (remplacer par un vrai lecteur HLS en prod)
+            st.video("https://www.w3schools.com/html/mov_bbb.mp4")
+            st.markdown(f"<h3>{stream['profiles']['username']} en direct</h3>", unsafe_allow_html=True)
+            # Récupérer les paramètres TST du streamer pour la jauge
+            streamer_params = supabase.table("tst_params").select("*").eq("username", stream["profiles"]["username"]).execute()
+            if streamer_params.data:
+                phi_m = streamer_params.data[0]["phi_m"]
+                phi_c = streamer_params.data[0]["phi_c"]
+                phi_d = streamer_params.data[0]["phi_d"]
+                stability = (phi_m + phi_c) / max(phi_d, 0.1)
+            else:
+                stability = 1.0
+        else:  # panel
+            panel = current["data"]
+            st.markdown(f"<h2>{panel['title']}</h2>", unsafe_allow_html=True)
+            st.markdown(f"<p>Créé par {panel['profiles']['username']}</p>", unsafe_allow_html=True)
+            # Afficher les derniers messages du panel
+            msgs = supabase.table("messages").select(
+                "*, profiles!inner(username)"
+            ).eq("panel_id", panel["id"]).order("created_at", desc=True).limit(5).execute()
+            chat_html = "<div class='ttu-chat-overlay'>"
+            for msg in reversed(msgs.data):
+                chat_html += f"<p><b>{msg['profiles']['username']}</b> : {decrypt_text(msg.get('text', ''))}</p>"
+            chat_html += "</div>"
+            st.markdown(chat_html, unsafe_allow_html=True)
+            stability = panel.get("current_stability", 1.0)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Barre latérale d'actions
+        st.markdown('<div class="ttu-sidebar">', unsafe_allow_html=True)
+        creator_pic = current["data"]["profiles"].get("profile_pic") or "https://via.placeholder.com/50"
+        st.markdown(f"<img src='{creator_pic}' style='width:50px;height:50px;border-radius:50%;margin-bottom:20px;'>", unsafe_allow_html=True)
+
+        # Bouton like (résonance)
+        st.markdown('<div class="ttu-action-button" onclick="alert(\'Like !\')"><span class="ttu-action-icon">❤️</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="ttu-action-count">1.2k</div>', unsafe_allow_html=True)
+
+        # Bouton cadeau (popover Streamlit)
+        with st.popover("🎁"):
+            st.write("Envoyer un cadeau")
+            gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
+            if gifts.data:
+                for g in gifts.data[:3]:  # afficher les 3 premiers pour ne pas surcharger
+                    if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}_{current['data']['id']}"):
+                        wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
+                        if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
+                            # Débiter l'utilisateur
+                            new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
+                            supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
+                            # Créditer le créateur
+                            creator_id = current["data"]["user_id"] if current["type"] == "stream" else current["data"]["creator_id"]
+                            creator_wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", creator_id).execute()
+                            if creator_wallet.data:
+                                share = 1.0 if g["name"] == "La Porte de l’Oracle" else 0.8
+                                creator_new = creator_wallet.data[0]["kongo_balance"] + g["kc_cost"] * share
+                                supabase.table("wallets").update({"kongo_balance": creator_new}).eq("user_id", creator_id).execute()
+                            # Enregistrer le cadeau
+                            supabase.table("stream_gifts").insert({
+                                "stream_id": current["data"]["id"] if current["type"] == "stream" else None,
+                                "panel_id": current["data"]["id"] if current["type"] == "panel" else None,
+                                "sender_id": user.id,
+                                "gift_id": g["id"],
+                                "combo_count": 1
+                            }).execute()
+                            # Mise à jour de la résonance/stabilité
+                            if current["type"] == "stream":
+                                new_res = current["data"]["resonance_score"] + g["ttu_impact"]
+                                supabase.table("ttu_streams").update({"resonance_score": new_res}).eq("id", current["data"]["id"]).execute()
+                            else:
+                                new_stab = current["data"]["current_stability"] + g["ttu_impact"] * 0.1
+                                supabase.table("ttu_panels").update({"current_stability": new_stab}).eq("id", current["data"]["id"]).execute()
+                            st.success(f"🎉 Cadeau {g['name']} envoyé !")
+                            update_dissipation(0.3)
+                            st.markdown('<style>.ttu-main { animation: gift-flash 0.5s ease; }</style>', unsafe_allow_html=True)
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Solde KC insuffisant.")
+
+        # Jauge de stabilité
+        gauge_height = min(int(stability * 50), 100)  # on limite à 100% visuel
+        st.markdown(f"""
+            <div class="ttu-gauge">
+                <div class="ttu-gauge-fill" style="height:{gauge_height}%;"></div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Bouton commentaire
+        st.markdown('<div class="ttu-action-button" onclick="alert(\'Commentaire\')"><span class="ttu-action-icon">💬</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="ttu-action-count">342</div>', unsafe_allow_html=True)
+
+        # Bouton partage
+        st.markdown('<div class="ttu-action-button" onclick="alert(\'Partager\')"><span class="ttu-action-icon">↗️</span></div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)  # fin sidebar
+        st.markdown('</div>', unsafe_allow_html=True)  # fin slide
+
+        # Zone de saisie pour commentaire (simple)
+        comment = st.chat_input("Ajouter un commentaire...")
+        if comment:
+            panel_id = None
+            if current["type"] == "stream":
+                # Récupérer ou créer le panel du stream
+                if "panel_id" not in current["data"] or not current["data"]["panel_id"]:
+                    panel_res = supabase.table("ttu_panels").insert({
+                        "title": f"Chat de {current['data']['profiles']['username']}",
+                        "creator_id": current["data"]["user_id"],
+                        "current_stability": stability,
+                        "entropy_level": 0.0,
+                        "is_live": True
+                    }).execute()
+                    panel_id = panel_res.data[0]["id"]
+                    supabase.table("ttu_streams").update({"panel_id": panel_id}).eq("id", current["data"]["id"]).execute()
+                else:
+                    panel_id = current["data"]["panel_id"]
+            else:
+                panel_id = current["data"]["id"]
+            if panel_id:
+                encrypted = encrypt_text(comment)
+                supabase.table("messages").insert({
+                    "sender": user.id,
+                    "panel_id": panel_id,
+                    "text": encrypted,
+                    "created_at": datetime.now().isoformat()
+                }).execute()
+                st.rerun()
+
+# =====================================================
+# PAGE FEED (fil d'actualité classique)
 # =====================================================
 @stability_control
 def feed_page(low_power=False):
@@ -427,7 +733,7 @@ def feed_page(low_power=False):
                         "created_at": datetime.now().isoformat(),
                         "like_count": 0,
                         "comment_count": 0,
-                        "tst_rank_score": 0.0  # Sera mis à jour par un trigger ou calcul
+                        "tst_rank_score": 0.0
                     }
                     post_res = supabase.table("posts").insert(post_data).execute()
                     post_id = post_res.data[0]["id"]
@@ -448,7 +754,7 @@ def feed_page(low_power=False):
                 except Exception as e:
                     st.error(f"Erreur lors de la publication : {e}")
 
-    # Récupération des posts avec tri par tst_rank_score (ordre décroissant)
+    # Récupération des posts avec tri par tst_rank_score
     query = supabase.table("posts").select(
         "*, profiles!inner(username, profile_pic)"
     ).order("tst_rank_score", desc=True).limit(50 if not low_power else 10).execute()
@@ -515,6 +821,9 @@ def feed_page(low_power=False):
                         delete_post(post["id"])
             st.divider()
 
+# =====================================================
+# PAGE PROFIL
+# =====================================================
 def profile_page():
     st.header("👤 Mon Profil")
     with st.expander("Changer ma photo de profil", expanded=False):
@@ -549,7 +858,6 @@ def profile_page():
                 "bio": bio,
                 "location": location
             }).eq("id", user.id).execute()
-            # Mise à jour de la clé primaire dans tst_params
             supabase.table("tst_params").update({"username": username}).eq("username", profile["username"]).execute()
             st.success("Profil mis à jour")
             st.cache_data.clear()
@@ -564,6 +872,13 @@ def profile_page():
     col1.metric("Abonnés", followers.count)
     col2.metric("Abonnements", following.count)
 
+    st.subheader("Badge de donateur")
+    badge = get_user_badge(user.id)
+    st.markdown(f"**{badge}**")
+
+# =====================================================
+# PAGE MESSAGES
+# =====================================================
 def messages_page():
     st.header("✉️ Messagerie privée (chiffrée de bout en bout)")
     sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
@@ -625,6 +940,9 @@ def messages_page():
                 else:
                     st.warning("Le message ne peut pas être vide.")
 
+# =====================================================
+# PAGE MARKETPLACE
+# =====================================================
 def marketplace_page():
     st.header("🏪 Marketplace")
     with st.expander("➕ Ajouter une annonce"):
@@ -739,6 +1057,9 @@ def marketplace_page():
             else:
                 st.info(f"📊 {listing.get('sales_count', 0)} client(s) sur cette annonce")
 
+# =====================================================
+# PAGE WALLET
+# =====================================================
 def wallet_page():
     st.header("💰 Mon Wallet")
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
@@ -776,7 +1097,7 @@ def wallet_page():
                     "total_mined": new_mined,
                     "last_reward_at": now.isoformat()
                 }).eq("user_id", user.id).execute()
-                update_dissipation(-0.1)  # Le minage réduit la dissipation
+                update_dissipation(-0.1)
                 st.success("+10 KC minés !")
                 st.rerun()
             else:
@@ -789,6 +1110,9 @@ def wallet_page():
     st.subheader("📜 Activité récente")
     st.info("L'historique détaillé des transactions Marketplace sera bientôt disponible.")
 
+# =====================================================
+# PAGE PARAMÈTRES
+# =====================================================
 def settings_page():
     st.header("⚙️ Paramètres")
     PREMIUM_PRICE = 10000.0
@@ -850,6 +1174,9 @@ def settings_page():
     if st.button("Supprimer mon compte", type="primary"):
         st.warning("Fonction désactivée pour le moment.")
 
+# =====================================================
+# PAGE ADMIN
+# =====================================================
 def admin_page():
     st.header("🛡️ Espace Administration")
     st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")
@@ -871,7 +1198,6 @@ def admin_page():
             new_role = st.selectbox("Nouveau rôle", ["user", "admin", "moderator"])
             if st.form_submit_button("Appliquer"):
                 supabase.table("profiles").update({"role": new_role}).eq("id", user_id).execute()
-                # Log admin
                 supabase.table("admin_logs").insert({
                     "admin_id": user.id,
                     "action": "change_role",
@@ -943,7 +1269,9 @@ def admin_page():
 # =====================================================
 # ROUTEUR PRINCIPAL
 # =====================================================
-if menu == "🌐 Feed":
+if menu == "🎵 TokTok":
+    ttu_vertical_feed()
+elif menu == "🌐 Feed":
     feed_page()
 elif menu == "👤 Mon Profil":
     profile_page()

@@ -4,3 +4,4 @@ cryptography==44.0.2
 streamlit-webrtc==0.47.1
 av==13.2.0
 setuptools==78.1.0
+pandas==2.2.3

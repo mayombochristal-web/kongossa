@@ -1,12 +1,7 @@
-libavformat-dev
-libavcodec-dev
-libavdevice-dev
-libavutil-dev
-libswscale-dev
-libswresample-dev
-libpostproc-dev
-pkg-config
 libgl1
+libglib2.0-0
 libxext6
-libxrender-dev
+libxrender1
 libgomp1
+pkg-config
+libffi7

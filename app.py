@@ -52,8 +52,11 @@ def encrypt_text(plain_text: str) -> str:
 def decrypt_text(encrypted_b64: str) -> str:
     if not encrypted_b64:
         return ""
-    encrypted = base64.b64decode(encrypted_b64)
-    return fernet.decrypt(encrypted).decode()
+    try:
+        encrypted = base64.b64decode(encrypted_b64)
+        return fernet.decrypt(encrypted).decode()
+    except Exception:
+        return "🔐 Message illisible (erreur de clé)"
 
 # =====================================================
 # FONCTIONS DE HASH (admin)
@@ -238,6 +241,79 @@ def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
         return None
 
 # =====================================================
+# FONCTIONS POUR LES STATISTIQUES DES POSTS
+# =====================================================
+def get_post_stats(post_id):
+    # Compte réel des likes (gratuits)
+    likes_res = supabase.table("likes").select("*", count="exact").eq("post_id", post_id).execute()
+    likes_count = likes_res.count if likes_res.count else 0
+
+    # Compte réel des commentaires
+    comments_res = supabase.table("comments").select("*", count="exact").eq("post_id", post_id).execute()
+    comments_count = comments_res.count if comments_res.count else 0
+
+    # Compte des réactions premium (emojis payants)
+    reactions_res = supabase.table("reactions").select("*", count="exact").eq("post_id", post_id).execute()
+    reactions_count = reactions_res.count if reactions_res.count else 0
+
+    return {
+        "likes": likes_count,
+        "comments": comments_count,
+        "reactions": reactions_count
+    }
+
+# Hiérarchie des emojis payants
+EMOJI_HIERARCHY = {
+    "🔥": {"label": "Hype", "cost": 10, "share": 8},      # L'auteur gagne 8 KC
+    "💎": {"label": "Pépite", "cost": 50, "share": 40},   # L'auteur gagne 40 KC
+    "👑": {"label": "Légende", "cost": 100, "share": 80}  # L'auteur gagne 80 KC
+}
+
+def process_emoji_payment(post_id, author_id, emoji_type):
+    """Gère le paiement d'une réaction émoji premium."""
+    cost = EMOJI_HIERARCHY[emoji_type]["cost"]
+    share = EMOJI_HIERARCHY[emoji_type]["share"]
+
+    # Vérifier le solde de l'utilisateur
+    wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
+    if not wallet_res.data:
+        st.error("Portefeuille introuvable.")
+        return
+    wallet = wallet_res.data[0]
+    if wallet["kongo_balance"] < cost:
+        st.error(f"Solde insuffisant. Il vous manque {cost - wallet['kongo_balance']} KC.")
+        return
+
+    # Vérifier que l'utilisateur n'a pas déjà réagi avec cet émoji sur ce post (optionnel)
+    # On peut autoriser plusieurs réactions de types différents
+
+    try:
+        # 1. Débiter l'utilisateur
+        new_bal = wallet["kongo_balance"] - cost
+        supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
+
+        # 2. Créditer l'auteur (80% du coût)
+        author_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", author_id).execute()
+        if author_wallet_res.data:
+            author_wallet = author_wallet_res.data[0]
+            new_author_bal = author_wallet["kongo_balance"] + share
+            supabase.table("wallets").update({"kongo_balance": new_author_bal}).eq("user_id", author_id).execute()
+
+        # 3. Enregistrer la réaction dans la table reactions
+        supabase.table("reactions").insert({
+            "post_id": post_id,
+            "user_id": user.id,
+            "emoji": emoji_type,
+            "cost": cost
+        }).execute()
+
+        st.success(f"Réaction {emoji_type} envoyée !")
+        time.sleep(0.5)
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erreur lors du traitement de la réaction : {e}")
+
+# =====================================================
 # PAGES
 # =====================================================
 def feed_page():
@@ -248,6 +324,10 @@ def feed_page():
             media_file = st.file_uploader("Image / Vidéo / Audio", type=["png", "jpg", "jpeg", "mp4", "mp3", "wav"])
             submitted = st.form_submit_button("Publier")
             if submitted and (post_text or media_file):
+                # Vérification taille fichier
+                if media_file and media_file.size > 50 * 1024 * 1024:  # 50 Mo max
+                    st.error("Le fichier est trop volumineux (max 50 Mo).")
+                    st.stop()
                 try:
                     media_path = None
                     media_type = None
@@ -281,8 +361,9 @@ def feed_page():
                 except Exception as e:
                     st.error(f"Erreur lors de la publication : {e}")
 
+    # Récupération des posts avec les profils
     posts = supabase.table("posts").select(
-        "*, profiles!inner(username, profile_pic), likes(count), comments(count)"
+        "*, profiles!inner(username, profile_pic)"
     ).order("created_at", desc=True).limit(50).execute()
 
     if not posts.data:
@@ -301,6 +382,8 @@ def feed_page():
             with col2:
                 st.markdown(f"**{post['profiles']['username']}** · {post['created_at'][:10]}")
             st.write(post["text"])
+
+            # Affichage du média
             if post.get("media_path"):
                 file_url = get_signed_url("media", post["media_path"])
                 if file_url:
@@ -313,14 +396,17 @@ def feed_page():
                 else:
                     st.warning("Média temporairement indisponible")
 
-            like_count = len(post.get("likes", []))
-            comment_count = len(post.get("comments", []))
-            col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 1])
+            # Statistiques du post
+            stats = get_post_stats(post["id"])
+            st.markdown(f"❤️ {stats['likes']}  |  💬 {stats['comments']}  |  🔥 {stats['reactions']}")
+
+            # Boutons d'interaction
+            col_a, col_b, col_c, col_d, col_e = st.columns([1, 1, 1, 1, 1])
             with col_a:
-                if st.button(f"❤️ {like_count}", key=f"like_{post['id']}"):
+                if st.button("❤️", key=f"like_{post['id']}"):
                     like_post(post["id"])
             with col_b:
-                with st.popover(f"💬 {comment_count}"):
+                with st.popover("💬"):
                     comments = supabase.table("comments").select(
                         "*, profiles(username)"
                     ).eq("post_id", post["id"]).order("created_at").execute()
@@ -330,11 +416,20 @@ def feed_page():
                     if st.button("Envoyer", key=f"send_{post['id']}"):
                         add_comment(post["id"], new_comment)
             with col_c:
-                st.button("🔗 Partager", key=f"share_{post['id']}")
+                if st.button("🔥 (10 KC)", key=f"fire_{post['id']}"):
+                    process_emoji_payment(post["id"], post["user_id"], "🔥")
             with col_d:
-                if post["user_id"] == user.id or is_admin():
-                    if st.button("🗑️", key=f"del_{post['id']}"):
-                        delete_post(post["id"])
+                if st.button("💎 (50 KC)", key=f"diamond_{post['id']}"):
+                    process_emoji_payment(post["id"], post["user_id"], "💎")
+            with col_e:
+                if st.button("👑 (100 KC)", key=f"crown_{post['id']}"):
+                    process_emoji_payment(post["id"], post["user_id"], "👑")
+
+            # Bouton de suppression (si propriétaire ou admin)
+            if post["user_id"] == user.id or is_admin():
+                if st.button("🗑️ Supprimer", key=f"del_{post['id']}"):
+                    delete_post(post["id"])
+
             st.divider()
 
 def profile_page():
@@ -342,6 +437,10 @@ def profile_page():
     with st.expander("Changer ma photo de profil", expanded=False):
         uploaded_file = st.file_uploader("Choisir une image", type=["png", "jpg", "jpeg"])
         if uploaded_file:
+            # Limite de taille (5 Mo)
+            if uploaded_file.size > 5 * 1024 * 1024:
+                st.error("Image trop volumineuse (max 5 Mo).")
+                st.stop()
             try:
                 ext = uploaded_file.name.split(".")[-1]
                 file_name = f"avatars/{user.id}/{uuid.uuid4()}.{ext}"
@@ -403,15 +502,14 @@ def messages_page():
     )
     if selected_contact:
         st.subheader(f"Discussion avec {contact_dict[selected_contact]} (messages chiffrés)")
+        # Récupérer les messages avec limite pour éviter la surcharge
         messages = supabase.table("messages").select("*").or_(
             f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
             f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
-        ).order("created_at").execute()
+        ).order("created_at").limit(100).execute()
+
         for msg in messages.data:
-            try:
-                decrypted_text = decrypt_text(msg.get("text", ""))
-            except Exception:
-                decrypted_text = "🔐 Message corrompu"
+            decrypted_text = decrypt_text(msg.get("text", ""))
             if msg["sender"] == user.id:
                 st.markdown(
                     f"<div style='text-align: right; background-color: #dcf8c6; padding: 8px; border-radius: 10px; margin:5px;'>"
@@ -424,6 +522,7 @@ def messages_page():
                     f"<b>{contact_dict[selected_contact]}</b> : {decrypted_text}</div>",
                     unsafe_allow_html=True
                 )
+
         with st.form("new_message"):
             msg_text = st.text_area("Votre message")
             if st.form_submit_button("Envoyer (chiffré)"):
@@ -450,6 +549,9 @@ def marketplace_page():
             media = st.file_uploader("Image du produit", type=["png", "jpg", "jpeg"])
             submitted = st.form_submit_button("Publier l'annonce")
             if submitted and title:
+                if media and media.size > 5 * 1024 * 1024:
+                    st.error("Image trop volumineuse (max 5 Mo).")
+                    st.stop()
                 try:
                     media_url = None
                     if media:
@@ -494,13 +596,19 @@ def marketplace_page():
             st.markdown(f":{color}[**[{status}]**]")
             if listing.get("media_url"):
                 st.image(listing["media_url"], use_container_width=True)
-            st.write(listing["description"][:100] + "...")
+            st.write(listing["description"][:100] + "..." if len(listing["description"]) > 100 else listing["description"])
             st.write(f"💰 **{listing['price_kc']:,.0f} KC**")
             st.caption(f"Vendeur : {listing['profiles']['username']}")
 
             if listing["user_id"] != user.id:
                 if status == "Disponible":
                     if st.button(f"🛒 Acheter ({listing['price_kc']} KC)", key=f"buy_{listing['id']}"):
+                        # Vérifier que le statut est toujours Disponible (pour éviter les achats concurrents)
+                        current_listing = supabase.table("marketplace_listings").select("status").eq("id", listing["id"]).single().execute()
+                        if current_listing.data and current_listing.data["status"] != "Disponible":
+                            st.error("Cette annonce n'est plus disponible.")
+                            st.rerun()
+
                         wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
                         if wallet_res.data:
                             buyer_wallet = wallet_res.data[0]
@@ -537,7 +645,7 @@ def marketplace_page():
                             else:
                                 st.error("Solde KC insuffisant.")
                         else:
-                            st.button("❌ Déjà Vendu", disabled=True, key=f"sold_{listing['id']}")
+                            st.error("Portefeuille introuvable.")
                 else:
                     st.button("❌ Déjà Vendu", disabled=True, key=f"sold_{listing['id']}")
             else:

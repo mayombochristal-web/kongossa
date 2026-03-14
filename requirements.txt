@@ -1,9 +1,6 @@
 streamlit==1.41.0
 supabase==2.12.0
-pandas==2.2.3
 cryptography==44.0.2
 streamlit-webrtc==0.47.1
 av==13.2.0
-numpy==2.2.4
-Pillow==11.1.0
 setuptools==78.1.0

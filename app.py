@@ -185,7 +185,6 @@ st.sidebar.write(f"ID : {user.id[:8]}...")
 menu_options = ["🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "⚙️ Paramètres"]
 if is_admin():
     menu_options.append("🛡️ Admin")
-
 menu = st.sidebar.radio("Navigation", menu_options)
 
 if st.sidebar.button("🚪 Déconnexion"):
@@ -243,22 +242,18 @@ def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
 # =====================================================
 def feed_page():
     st.header("🌐 Fil d'actualité")
-
     with st.expander("✍️ Créer un post", expanded=False):
         with st.form("new_post"):
             post_text = st.text_area("Quoi de neuf ?")
             media_file = st.file_uploader("Image / Vidéo / Audio", type=["png", "jpg", "jpeg", "mp4", "mp3", "wav"])
             submitted = st.form_submit_button("Publier")
-
             if submitted and (post_text or media_file):
                 try:
                     media_path = None
                     media_type = None
-
                     if media_file:
                         ext = media_file.name.split(".")[-1]
                         file_name = f"posts/{user.id}/{uuid.uuid4()}.{ext}"
-                        # Déterminer le content-type
                         if ext.lower() in ["mp3", "wav"]:
                             content_type = "audio/mpeg" if ext == "mp3" else "audio/wav"
                         elif ext.lower() in ["mp4"]:
@@ -305,48 +300,45 @@ def feed_page():
                     st.image("https://via.placeholder.com/40", width=40)
             with col2:
                 st.markdown(f"**{post['profiles']['username']}** · {post['created_at'][:10]}")
-                st.write(post["text"])
-                if post.get("media_path"):
-                    file_url = get_signed_url("media", post["media_path"])
-                    if file_url:
-                        if post.get("media_type") and "image" in post["media_type"]:
-                            st.image(file_url)
-                        elif post.get("media_type") and "video" in post["media_type"]:
-                            st.video(file_url)
-                        elif post.get("media_type") and "audio" in post["media_type"]:
-                            st.audio(file_url)
-                    else:
-                        st.warning("Média temporairement indisponible")
+            st.write(post["text"])
+            if post.get("media_path"):
+                file_url = get_signed_url("media", post["media_path"])
+                if file_url:
+                    if post.get("media_type") and "image" in post["media_type"]:
+                        st.image(file_url)
+                    elif post.get("media_type") and "video" in post["media_type"]:
+                        st.video(file_url)
+                    elif post.get("media_type") and "audio" in post["media_type"]:
+                        st.audio(file_url)
+                else:
+                    st.warning("Média temporairement indisponible")
 
-                like_count = len(post.get("likes", []))
-                comment_count = len(post.get("comments", []))
-
-                col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 1])
-                with col_a:
-                    if st.button(f"❤️ {like_count}", key=f"like_{post['id']}"):
-                        like_post(post["id"])
-                with col_b:
-                    with st.popover(f"💬 {comment_count}"):
-                        comments = supabase.table("comments").select(
-                            "*, profiles(username)"
-                        ).eq("post_id", post["id"]).order("created_at").execute()
-                        for c in comments.data:
-                            st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
-                        new_comment = st.text_input("Votre commentaire", key=f"input_{post['id']}")
-                        if st.button("Envoyer", key=f"send_{post['id']}"):
-                            add_comment(post["id"], new_comment)
-                with col_c:
-                    st.button("🔗 Partager", key=f"share_{post['id']}")
-                with col_d:
-                    if post["user_id"] == user.id or is_admin():
-                        if st.button("🗑️", key=f"del_{post['id']}"):
-                            delete_post(post["id"])
+            like_count = len(post.get("likes", []))
+            comment_count = len(post.get("comments", []))
+            col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 1])
+            with col_a:
+                if st.button(f"❤️ {like_count}", key=f"like_{post['id']}"):
+                    like_post(post["id"])
+            with col_b:
+                with st.popover(f"💬 {comment_count}"):
+                    comments = supabase.table("comments").select(
+                        "*, profiles(username)"
+                    ).eq("post_id", post["id"]).order("created_at").execute()
+                    for c in comments.data:
+                        st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
+                    new_comment = st.text_input("Votre commentaire", key=f"input_{post['id']}")
+                    if st.button("Envoyer", key=f"send_{post['id']}"):
+                        add_comment(post["id"], new_comment)
+            with col_c:
+                st.button("🔗 Partager", key=f"share_{post['id']}")
+            with col_d:
+                if post["user_id"] == user.id or is_admin():
+                    if st.button("🗑️", key=f"del_{post['id']}"):
+                        delete_post(post["id"])
             st.divider()
 
 def profile_page():
     st.header("👤 Mon Profil")
-
-    # Upload de photo de profil
     with st.expander("Changer ma photo de profil", expanded=False):
         uploaded_file = st.file_uploader("Choisir une image", type=["png", "jpg", "jpeg"])
         if uploaded_file:
@@ -358,7 +350,6 @@ def profile_page():
                     file=uploaded_file.getvalue(),
                     file_options={"content-type": f"image/{ext}"}
                 )
-                # Rendre publique (ou utiliser URL signée, mais on prend publique pour simplifier)
                 public_url = supabase.storage.from_("avatars").get_public_url(file_name)
                 supabase.table("profiles").update({"profile_pic": public_url}).eq("id", user.id).execute()
                 st.success("Photo de profil mise à jour")
@@ -384,7 +375,6 @@ def profile_page():
     st.subheader("Mes statistiques")
     post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute()
     st.metric("Posts publiés", post_count.count)
-
     followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute()
     following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute()
     col1, col2 = st.columns(2)
@@ -393,7 +383,6 @@ def profile_page():
 
 def messages_page():
     st.header("✉️ Messagerie privée (chiffrée de bout en bout)")
-
     sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
     received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
     contact_ids = set()
@@ -401,7 +390,6 @@ def messages_page():
         contact_ids.add(msg["recipient"])
     for msg in received.data:
         contact_ids.add(msg["sender"])
-
     if not contact_ids:
         st.info("Aucune conversation pour l'instant.")
         return
@@ -413,21 +401,17 @@ def messages_page():
         options=list(contact_dict.keys()),
         format_func=lambda x: contact_dict[x]
     )
-
     if selected_contact:
         st.subheader(f"Discussion avec {contact_dict[selected_contact]} (messages chiffrés)")
-
         messages = supabase.table("messages").select("*").or_(
             f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
             f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
         ).order("created_at").execute()
-
         for msg in messages.data:
             try:
                 decrypted_text = decrypt_text(msg.get("text", ""))
             except Exception:
                 decrypted_text = "🔐 Message corrompu"
-
             if msg["sender"] == user.id:
                 st.markdown(
                     f"<div style='text-align: right; background-color: #dcf8c6; padding: 8px; border-radius: 10px; margin:5px;'>"
@@ -440,7 +424,6 @@ def messages_page():
                     f"<b>{contact_dict[selected_contact]}</b> : {decrypted_text}</div>",
                     unsafe_allow_html=True
                 )
-
         with st.form("new_message"):
             msg_text = st.text_area("Votre message")
             if st.form_submit_button("Envoyer (chiffré)"):
@@ -459,8 +442,6 @@ def messages_page():
 
 def marketplace_page():
     st.header("🏪 Marketplace")
-
-    # --- BLOC : AJOUT D'ANNONCE ---
     with st.expander("➕ Ajouter une annonce"):
         with st.form("new_listing"):
             title = st.text_input("Titre")
@@ -468,21 +449,17 @@ def marketplace_page():
             price = st.number_input("Prix (KC)", min_value=0.0, step=0.1)
             media = st.file_uploader("Image du produit", type=["png", "jpg", "jpeg"])
             submitted = st.form_submit_button("Publier l'annonce")
-
             if submitted and title:
                 try:
                     media_url = None
                     if media:
-                        # Organisation par dossier utilisateur pour plus de clarté
                         file_name = f"marketplace/{user.id}/{uuid.uuid4()}.jpg"
                         supabase.storage.from_("marketplace").upload(
                             path=file_name,
                             file=media.getvalue(),
                             file_options={"content-type": media.type}
                         )
-                        # Tentative de récupération d'URL signée ou publique
                         media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
-
                     supabase.table("marketplace_listings").insert({
                         "user_id": user.id,
                         "title": title,
@@ -492,21 +469,18 @@ def marketplace_page():
                         "media_type": "image",
                         "created_at": datetime.now().isoformat(),
                         "is_active": True,
-                        "status": "Disponible", # Nouveau champ status
-                        "sales_count": 0        # Compteur pour le vendeur
+                        "status": "Disponible",
+                        "sales_count": 0
                     }).execute()
                     st.success("Annonce ajoutée et disponible !")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erreur lors de la publication : {e}")
 
-    # --- BLOC : AFFICHAGE DES ANNONCES ---
     st.subheader("Annonces récentes")
-    # On filtre pour ne montrer que ce qui est "Disponible" ou "Vendu"
     listings = supabase.table("marketplace_listings").select(
         "*, profiles!inner(username)"
     ).eq("is_active", True).order("created_at", desc=True).execute()
-
     if not listings.data:
         st.info("Aucune annonce pour le moment.")
         return
@@ -514,58 +488,47 @@ def marketplace_page():
     cols = st.columns(3)
     for i, listing in enumerate(listings.data):
         with cols[i % 3]:
-            # Badge de statut
             status = listing.get("status", "Disponible")
             color = "green" if status == "Disponible" else "red"
             st.markdown(f"### {listing['title']}")
             st.markdown(f":{color}[**[{status}]**]")
-            
             if listing.get("media_url"):
                 st.image(listing["media_url"], use_container_width=True)
-            
             st.write(listing["description"][:100] + "...")
             st.write(f"💰 **{listing['price_kc']:,.0f} KC**")
             st.caption(f"Vendeur : {listing['profiles']['username']}")
 
-            # --- LOGIQUE DE TRANSACTION ET CONTACT ---
             if listing["user_id"] != user.id:
                 if status == "Disponible":
                     if st.button(f"🛒 Acheter ({listing['price_kc']} KC)", key=f"buy_{listing['id']}"):
-                        # 1. Vérifier le solde de l'acheteur
                         wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
-                        
                         if wallet_res.data:
                             buyer_wallet = wallet_res.data[0]
                             if buyer_wallet["kongo_balance"] >= listing["price_kc"]:
                                 try:
-                                    # A. Débiter l'acheteur
+                                    # Débiter l'acheteur
                                     new_buyer_balance = buyer_wallet["kongo_balance"] - listing["price_kc"]
                                     supabase.table("wallets").update({"kongo_balance": new_buyer_balance}).eq("user_id", user.id).execute()
-                                    
-                                    # B. Créditer le vendeur
+                                    # Créditer le vendeur
                                     vendeur_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", listing["user_id"]).execute()
                                     if vendeur_wallet_res.data:
                                         new_seller_balance = vendeur_wallet_res.data[0]["kongo_balance"] + listing["price_kc"]
                                         supabase.table("wallets").update({"kongo_balance": new_seller_balance}).eq("user_id", listing["user_id"]).execute()
-
-                                    # C. Mettre à jour le statut de l'annonce et le compteur de ventes
+                                    # Mettre à jour l'annonce
                                     new_sales_count = listing.get("sales_count", 0) + 1
                                     supabase.table("marketplace_listings").update({
                                         "status": "Vendu",
                                         "sales_count": new_sales_count
                                     }).eq("id", listing["id"]).execute()
-
-                                    # D. Message automatique chiffré
+                                    # Message automatique
                                     msg_text = f"🚨 ACHAT : Je suis intéressé par '{listing['title']}'. Le paiement de {listing['price_kc']} KC a été transféré sur votre compte."
                                     encrypted_msg = encrypt_text(msg_text)
-                                    
                                     supabase.table("messages").insert({
                                         "sender": user.id,
                                         "recipient": listing["user_id"],
                                         "text": encrypted_msg,
                                         "created_at": datetime.now().isoformat()
                                     }).execute()
-
                                     st.success("✅ Transaction terminée ! Le vendeur a été notifié.")
                                     time.sleep(1.5)
                                     st.rerun()
@@ -573,22 +536,19 @@ def marketplace_page():
                                     st.error(f"Erreur transactionnelle : {e}")
                             else:
                                 st.error("Solde KC insuffisant.")
+                        else:
+                            st.button("❌ Déjà Vendu", disabled=True, key=f"sold_{listing['id']}")
                 else:
                     st.button("❌ Déjà Vendu", disabled=True, key=f"sold_{listing['id']}")
             else:
-                # Vue vendeur : voir le nombre de clients générés
                 st.info(f"📊 {listing.get('sales_count', 0)} client(s) sur cette annonce")
 
 def wallet_page():
     st.header("💰 Mon Wallet")
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
-    
-    # Initialisation automatique si inexistant
     if not wallet.data:
-        # Note : On peut vérifier si l'user est admin ici via le profil
         user_profile = supabase.table("profiles").select("role").eq("user_id", user.id).single().execute()
         is_admin_user = user_profile.data["role"] == "admin" if user_profile.data else False
-        
         supabase.table("wallets").insert({
             "user_id": user.id,
             "kongo_balance": 100_000_000.0 if is_admin_user else 0.0,
@@ -596,26 +556,21 @@ def wallet_page():
             "last_reward_at": datetime.now().isoformat()
         }).execute()
         wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
-    
     wallet_data = wallet.data[0]
-
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Solde KC", f"{wallet_data['kongo_balance']:,.0f} KC")
     with col2:
         st.metric("Total miné", f"{wallet_data['total_mined']:,.0f} KC")
 
-    # --- SYSTÈME DE MINAGE ---
     if st.button("⛏️ Miner (récompense quotidienne)"):
         try:
             last_str = wallet_data["last_reward_at"]
             if last_str.endswith("Z"):
                 last_str = last_str.replace("Z", "+00:00")
-            
             last = datetime.fromisoformat(last_str)
             now = datetime.now()
             delta = now - last
-            
             if delta.total_seconds() > 86400:
                 new_balance = wallet_data["kongo_balance"] + 10
                 new_mined = wallet_data["total_mined"] + 10
@@ -638,13 +593,9 @@ def wallet_page():
 
 def settings_page():
     st.header("⚙️ Paramètres")
-    
-    # Prix de l'abonnement Premium
     PREMIUM_PRICE = 10000.0
 
-    # 1. Vérification du plan actuel
-   sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()
-    
+    sub = supabase.table("subscriptions").select("*").eq("user_id", user.id).execute()
     if sub.data:
         plan = sub.data[0]["plan_type"]
         expires = sub.data[0].get("expires_at")
@@ -652,35 +603,28 @@ def settings_page():
     else:
         st.info("Plan actuel : **Gratuit**")
 
-    # 2. Bouton d'achat Premium avec logique de paiement
     if st.button("Passer à Premium (10 000 KC)"):
-        # Récupérer le wallet de l'utilisateur
-        [span_9](start_span)wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()[span_9](end_span)
-        
+        wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
         if wallet_res.data:
             wallet_data = wallet_res.data[0]
-            [span_10](start_span)current_balance = wallet_data["kongo_balance"][span_10](end_span)
-            
+            current_balance = wallet_data["kongo_balance"]
             if current_balance >= PREMIUM_PRICE:
                 try:
-                    # A. Débiter le compte
                     new_balance = current_balance - PREMIUM_PRICE
                     supabase.table("wallets").update({
                         "kongo_balance": new_balance
-                    [span_11](start_span)}).eq("user_id", user.id).execute()[span_11](end_span)
-                    
-                    # B. Activer l'abonnement
+                    }).eq("user_id", user.id).execute()
+
                     supabase.table("subscriptions").insert({
-                        [span_12](start_span)"user_id": user.id,[span_12](end_span)
-                        [span_13](start_span)"plan_type": "Premium",[span_13](end_span)
-                        [span_14](start_span)"activated_at": datetime.now().isoformat(),[span_14](end_span)
-                        [span_15](start_span)"expires_at": (datetime.now().replace(year=datetime.now().year+1)).isoformat(),[span_15](end_span)
-                        [span_16](start_span)"is_active": True[span_16](end_span)
-                    [span_17](start_span)}).execute()[span_17](end_span)
-                    
-                    [span_18](start_span)st.success(f"Compte Premium activé ! {PREMIUM_PRICE:,.0f} KC ont été débités.")[span_18](end_span)
+                        "user_id": user.id,
+                        "plan_type": "Premium",
+                        "activated_at": datetime.now().isoformat(),
+                        "expires_at": (datetime.now().replace(year=datetime.now().year+1)).isoformat(),
+                        "is_active": True
+                    }).execute()
+                    st.success(f"Compte Premium activé ! {PREMIUM_PRICE:,.0f} KC ont été débités.")
                     time.sleep(2)
-                    [span_19](start_span)st.rerun()[span_19](end_span)
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Erreur lors de la transaction : {e}")
             else:
@@ -688,15 +632,14 @@ def settings_page():
         else:
             st.error("Portefeuille introuvable. Veuillez d'abord initialiser votre Wallet.")
 
-    [span_20](start_span)st.divider()[span_20](end_span)
-    [span_21](start_span)st.subheader("Zone dangereuse")[span_21](end_span)
-    [span_22](start_span)if st.button("Supprimer mon compte", type="primary"):[span_22](end_span)
-        [span_23](start_span)st.warning("Fonction désactivée pour le moment.")[span_23](end_span)
+    st.divider()
+    st.subheader("Zone dangereuse")
+    if st.button("Supprimer mon compte", type="primary"):
+        st.warning("Fonction désactivée pour le moment.")
 
 def admin_page():
     st.header("🛡️ Espace Administration")
     st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")
-
     tab1, tab2, tab3, tab4 = st.tabs(["Utilisateurs", "Posts signalés", "Logs d'action", "Crédits"])
 
     with tab1:
@@ -704,7 +647,6 @@ def admin_page():
         users = supabase.table("profiles").select("id, username, role, created_at").execute()
         df_users = pd.DataFrame(users.data)
         st.dataframe(df_users)
-
         with st.form("change_role"):
             user_id = st.selectbox(
                 "Sélectionner un utilisateur",

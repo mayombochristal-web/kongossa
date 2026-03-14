@@ -8,7 +8,6 @@ import uuid
 import hashlib
 import hmac
 import base64
-import gc
 import random
 from cryptography.fernet import Fernet
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
@@ -45,7 +44,6 @@ def get_fernet():
 fernet = get_fernet()
 
 def init_gift_definitions():
-    """Initialise les 10 cadeaux culturels dans Supabase."""
     gifts = [
         {"name": "L’Atome d’Ogooué", "emoji": "💧", "kc_cost": 50, "animation_type": "blue_shockwave", "ttu_impact": 0.2},
         {"name": "Le Masque Punu", "emoji": "🎭", "kc_cost": 80, "animation_type": "petal_fall", "ttu_impact": 0.3},
@@ -227,7 +225,6 @@ def load_tst_params(username):
             return res.data[0]
     except Exception:
         pass
-    # default
     default = {
         "username": username,
         "phi_m": 1.0,
@@ -321,7 +318,6 @@ def like_post(post_id):
             "post_id": post_id,
             "user_id": user.id
         }).execute()
-        # Mise à jour du compteur
         post = supabase.table("posts").select("like_count").eq("id", post_id).execute()
         if post.data:
             new_count = post.data[0]["like_count"] + 1
@@ -421,9 +417,6 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # PAGE TOKTOK (FLUX VERTICAL TTU) - VERSION STABLE
 # =====================================================
 def ttu_vertical_feed():
-    # Pas de CSS personnalisé, on utilise le layout natif de Streamlit
-
-    # Caméra (pour lancer son live)
     st.subheader("📷 Lancer mon Live")
     webrtc_streamer(
         key="live-stream",
@@ -448,17 +441,14 @@ def ttu_vertical_feed():
     if "ttu_index" not in st.session_state:
         st.session_state.ttu_index = 0
 
-    # Navigation
     col1, col2, col3 = st.columns([1, 10, 1])
     with col1:
-        if st.button("⬆️", key="prev") and st.session_state.ttu_index > 0:
+        if st.button("⬆️", key="prev_panel") and st.session_state.ttu_index > 0:
             st.session_state.ttu_index -= 1
-            gc.collect()
             st.rerun()
     with col3:
-        if st.button("⬇️", key="next") and st.session_state.ttu_index < len(items) - 1:
+        if st.button("⬇️", key="next_panel") and st.session_state.ttu_index < len(items) - 1:
             st.session_state.ttu_index += 1
-            gc.collect()
             st.rerun()
 
     if not items:
@@ -468,14 +458,13 @@ def ttu_vertical_feed():
     current = items[st.session_state.ttu_index]
     panel = current["data"]
 
-    # Contenu principal : 2 colonnes
     col_main, col_sidebar = st.columns([0.85, 0.15])
 
     with col_main:
         st.markdown(f"## {panel['title']}")
         st.markdown(f"Créé par {panel['profiles']['username']}")
 
-        # Affichage des panélistes (simulé) - avec des colonnes simples
+        # Panélistes simulés
         st.markdown("**Panélistes**")
         panelist_cols = st.columns(5)
         panelists = [
@@ -486,11 +475,11 @@ def ttu_vertical_feed():
         for i, p in enumerate(panelists):
             with panelist_cols[i]:
                 if p["mic"]:
-                    st.markdown("🎤 " + p["name"])
+                    st.markdown(f"🎤 {p['name']}")
                 else:
-                    st.markdown("🔇 " + p["name"])
+                    st.markdown(f"🔇 {p['name']}")
 
-        # Chat du panneau
+        # Chat
         st.subheader("💬 Discussion")
         render_panel_chat(panel['id'])
 
@@ -498,14 +487,14 @@ def ttu_vertical_feed():
         st.image(panel['profiles'].get('profile_pic') or "https://via.placeholder.com/100", width=80)
         st.metric("Stabilité", f"{panel.get('current_stability', 1.0):.2f}")
 
-        if st.button("❤️ Like"):
+        if st.button("❤️ Like", key="like_panel"):
             st.info("Like (simulé)")
 
         with st.popover("🎁 Cadeau"):
             try:
                 gifts = supabase.table("gift_definitions").select("*").order("kc_cost").execute()
                 for g in gifts.data[:3]:
-                    if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}"):
+                    if st.button(f"{g['emoji']} {g['name']} ({int(g['kc_cost'])} KC)", key=f"gift_{g['id']}_{panel['id']}"):
                         wallet = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
                         if wallet.data and wallet.data[0]["kongo_balance"] >= g["kc_cost"]:
                             new_bal = wallet.data[0]["kongo_balance"] - g["kc_cost"]
@@ -532,25 +521,29 @@ def ttu_vertical_feed():
             except Exception:
                 st.error("Erreur cadeaux")
 
-        st.button("💬 Commenter")
+        if st.button("💬 Commenter", key="comment_button"):
+            st.session_state.show_comment_input = True
 
-    # Zone de saisie pour commentaire (en bas)
-    comment = st.chat_input("Ajouter un commentaire...")
-    if comment:
-        try:
-            encrypted = encrypt_text(comment)
-            supabase.table("messages").insert({
-                "sender": user.id,
-                "panel_id": panel["id"],
-                "text": encrypted,
-                "created_at": datetime.now().isoformat()
-            }).execute()
-            st.rerun()
-        except Exception as e:
-            st.error("Erreur envoi commentaire")
+    # Zone de saisie pour commentaire (apparaît seulement si bouton cliqué)
+    if st.session_state.get("show_comment_input", False):
+        with st.form(key=f"comment_form_{panel['id']}"):
+            comment = st.text_input("Votre commentaire")
+            submitted = st.form_submit_button("Envoyer")
+            if submitted and comment:
+                try:
+                    encrypted = encrypt_text(comment)
+                    supabase.table("messages").insert({
+                        "sender": user.id,
+                        "panel_id": panel["id"],
+                        "text": encrypted,
+                        "created_at": datetime.now().isoformat()
+                    }).execute()
+                    st.session_state.show_comment_input = False
+                    st.rerun()
+                except Exception as e:
+                    st.error("Erreur envoi commentaire")
 
 def render_panel_chat(panel_id):
-    """Affiche les derniers messages d'un panneau."""
     try:
         msgs = supabase.table("messages").select("sender, text, created_at").eq("panel_id", panel_id).order("created_at", desc=True).limit(10).execute()
         if not msgs.data:
@@ -631,7 +624,6 @@ def feed_page(low_power=False):
                 except Exception as e:
                     st.error(f"Erreur lors de la publication : {e}")
 
-    # Récupération des posts
     try:
         query = supabase.table("posts").select(
             "*, profiles!inner(username, profile_pic)"
@@ -806,17 +798,11 @@ def messages_page():
         for msg in messages.data:
             decrypted_text = decrypt_text(msg.get("text", ""))
             if msg["sender"] == user.id:
-                st.markdown(
-                    f"<div style='text-align: right; background-color: #dcf8c6; padding: 8px; border-radius: 10px; margin:5px;'>"
-                    f"<b>Vous</b> : {decrypted_text}</div>",
-                    unsafe_allow_html=True
-                )
+                with st.chat_message("user"):
+                    st.markdown(decrypted_text)
             else:
-                st.markdown(
-                    f"<div style='text-align: left; background-color: #f1f0f0; padding: 8px; border-radius: 10px; margin:5px;'>"
-                    f"<b>{contact_dict[selected_contact]}</b> : {decrypted_text}</div>",
-                    unsafe_allow_html=True
-                )
+                with st.chat_message("assistant"):
+                    st.markdown(decrypted_text)
 
         with st.form("new_message"):
             msg_text = st.text_area("Votre message")
@@ -897,9 +883,8 @@ def marketplace_page():
     for i, listing in enumerate(listings.data):
         with cols[i % 3]:
             status = listing.get("status", "Disponible")
-            color = "green" if status == "Disponible" else "red"
             st.markdown(f"### {listing['title']}")
-            st.markdown(f":{color}[**[{status}]**]")
+            st.markdown(f"**{status}**")
             if listing.get("media_url"):
                 st.image(listing["media_url"], use_container_width=True)
             st.write(listing["description"][:100] + "..." if len(listing["description"]) > 100 else listing["description"])

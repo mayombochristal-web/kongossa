@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 import io
+import random
 
 # =====================================================
 # CONFIGURATION
@@ -43,6 +44,32 @@ def get_fernet():
     return Fernet(key.encode())
 
 fernet = get_fernet()
+
+# =====================================================
+# INITIALISATION DES CADEAUX (à exécuter une fois)
+# =====================================================
+def init_gift_definitions():
+    """Insère les 10 cadeaux thématiques dans la table gift_definitions si elle est vide."""
+    gifts = [
+        {"name": "Atome d'Ogooué", "emoji": "💧", "kc_cost": 50, "animation_type": "particle", "ttu_impact": 0.1},
+        {"name": "Masque Punu", "emoji": "🎭", "kc_cost": 100, "animation_type": "full_screen", "ttu_impact": 0.2},
+        {"name": "Torche d'Ozavigui", "emoji": "🔥", "kc_cost": 75, "animation_type": "particle", "ttu_impact": 0.15},
+        {"name": "Pierre de Mbigou", "emoji": "🪨", "kc_cost": 120, "animation_type": "wave", "ttu_impact": 0.25},
+        {"name": "Danse du Ndjembè", "emoji": "💃", "kc_cost": 150, "animation_type": "full_screen", "ttu_impact": 0.3},
+        {"name": "Tambour de l'Unité", "emoji": "🥁", "kc_cost": 80, "animation_type": "wave", "ttu_impact": 0.15},
+        {"name": "Émeraude de l'Ivindo", "emoji": "💎", "kc_cost": 200, "animation_type": "full_screen", "ttu_impact": 0.4},
+        {"name": "Vol du Perroquet Gris", "emoji": "🦜", "kc_cost": 90, "animation_type": "particle", "ttu_impact": 0.2},
+        {"name": "Lion du Mayombé", "emoji": "🦁", "kc_cost": 300, "animation_type": "full_screen", "ttu_impact": 0.5},
+        {"name": "Porte de l'Oracle", "emoji": "⛩️", "kc_cost": 500, "animation_type": "full_screen", "ttu_impact": 1.0}
+    ]
+    for g in gifts:
+        # Vérifier si le cadeau existe déjà (par nom)
+        existing = supabase.table("gift_definitions").select("id").eq("name", g["name"]).execute()
+        if not existing.data:
+            supabase.table("gift_definitions").insert(g).execute()
+
+# Appeler cette fonction au démarrage (une seule fois)
+init_gift_definitions()
 
 # =====================================================
 # FONCTIONS DE CHIFFREMENT / DÉCHIFFREMENT AVEC SEL DYNAMIQUE
@@ -138,7 +165,9 @@ def login_signup():
                         "profile_pic": "",
                         "role": role,
                         "created_at": datetime.now().isoformat(),
-                        "last_seen": datetime.now().isoformat()
+                        "last_seen": datetime.now().isoformat(),
+                        "donation_level": 0,          # Niveau de donateur
+                        "total_donations": 0           # Total des KC donnés
                     }
                     supabase.table("profiles").insert(profile_data).execute()
                     # Création du wallet avec bonus admin
@@ -194,7 +223,6 @@ def is_admin():
 # FONCTIONS POUR LES UTILISATEURS EN LIGNE
 # =====================================================
 def get_online_users(threshold_minutes=5):
-    """Retourne la liste des utilisateurs actifs dans les dernières threshold_minutes."""
     cutoff = (datetime.now() - timedelta(minutes=threshold_minutes)).isoformat()
     res = supabase.table("profiles").select("id, username, profile_pic").gte("last_seen", cutoff).execute()
     return res.data if res.data else []
@@ -224,8 +252,6 @@ def is_following(follower_id, followed_id):
 # FONCTIONS POUR LE PARTAGE DE POST
 # =====================================================
 def share_post(original_post_id, sharer_id, comment=""):
-    """Crée un nouveau post citant l'original."""
-    # Récupérer le post original
     orig = supabase.table("posts").select("*, profiles!inner(username)").eq("id", original_post_id).single().execute()
     if not orig.data:
         return False
@@ -233,13 +259,12 @@ def share_post(original_post_id, sharer_id, comment=""):
     share_text = f"🔁 Partage de @{original['profiles']['username']} :\n\n{original['text']}"
     if comment:
         share_text = f"{comment}\n\n{share_text}"
-    # Créer le nouveau post (sans média)
     post_data = {
         "user_id": sharer_id,
         "text": share_text,
         "media_path": None,
         "media_type": None,
-        "shared_post_id": original_post_id,  # Ajout d'une colonne à prévoir dans posts
+        "shared_post_id": original_post_id,
         "created_at": datetime.now().isoformat()
     }
     supabase.table("posts").insert(post_data).execute()
@@ -249,31 +274,21 @@ def share_post(original_post_id, sharer_id, comment=""):
 # FONCTIONS TTU : GÉNÉRATION DES COUCHES SPECTRALES
 # =====================================================
 def generate_ttu_layers(media_bytes):
-    """
-    Extrait le noyau de stabilité (Φ_M) et calcule la densité spectrale (Φ_C).
-    Retourne (thumbnail_bytes, spectral_density)
-    """
     try:
-        # Sauvegarde temporaire
         with open("temp_media", "wb") as f:
             f.write(media_bytes)
-        # Lire la première frame (pour vidéo) ou l'image
         cap = cv2.VideoCapture("temp_media")
         ret, frame = cap.read()
         cap.release()
         if ret:
-            # Conversion en PIL
             img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         else:
-            # Si ce n'est pas une vidéo, essayer de lire comme image
             img = Image.open(io.BytesIO(media_bytes))
-        # Création du thumbnail (Φ_M)
         img.thumbnail((64, 64))
         img_blur = img.filter(ImageFilter.GaussianBlur(radius=2))
         buffer = io.BytesIO()
         img_blur.save(buffer, format="JPEG", quality=30)
         thumb_bytes = buffer.getvalue()
-        # Densité spectrale (simulée)
         spectral_density = float(np.var(np.array(img)) / 1000.0)
         return thumb_bytes, spectral_density
     except Exception as e:
@@ -281,13 +296,11 @@ def generate_ttu_layers(media_bytes):
         return None, 1.0
 
 # =====================================================
-# FONCTIONS POUR LES STREAMS ET CADEAUX
+# FONCTIONS POUR LES STREAMS ET CADEAUX (avec combo et jauge)
 # =====================================================
 def create_stream(title, description, video_file):
-    """Crée un stream (enregistrement vidéo) avec génération TTU."""
     user_id = user.id
     stream_id = str(uuid.uuid4())
-    # Upload vidéo dans bucket "streams"
     file_ext = video_file.name.split(".")[-1]
     file_name = f"streams/{user_id}/{stream_id}.{file_ext}"
     supabase.storage.from_("streams").upload(
@@ -295,7 +308,6 @@ def create_stream(title, description, video_file):
         file=video_file.getvalue(),
         file_options={"content-type": video_file.type}
     )
-    # Générer thumbnail
     thumb_bytes, spectral_density = generate_ttu_layers(video_file.getvalue())
     thumb_name = f"streams/{user_id}/{stream_id}_thumb.jpg"
     supabase.storage.from_("streams").upload(
@@ -304,7 +316,6 @@ def create_stream(title, description, video_file):
         file_options={"content-type": "image/jpeg"}
     )
     thumb_url = supabase.storage.from_("streams").get_public_url(thumb_name)
-    # Insérer dans ttu_streams
     supabase.table("ttu_streams").insert({
         "id": stream_id,
         "user_id": user_id,
@@ -313,6 +324,7 @@ def create_stream(title, description, video_file):
         "stream_key": str(uuid.uuid4()),
         "current_viewer_count": 0,
         "resonance_score": 0.0,
+        "stability_gauge": 0.0,          # Jauge de stabilité (0-100)
         "phi_m_core_url": thumb_url,
         "video_url": supabase.storage.from_("streams").get_public_url(file_name),
         "is_active": True,
@@ -320,24 +332,46 @@ def create_stream(title, description, video_file):
     }).execute()
     return stream_id
 
+def check_and_trigger_combo(stream_id, gift_id, sender_id):
+    """
+    Vérifie si 3 cadeaux identiques ont été envoyés dans les 10 dernières secondes.
+    Si oui, déclenche une pluie de KC pour tous les viewers actifs.
+    """
+    # Récupérer les dons récents (moins de 10 secondes)
+    cutoff = (datetime.now() - timedelta(seconds=10)).isoformat()
+    recent = supabase.table("stream_gifts").select("*").eq("stream_id", stream_id).eq("gift_id", gift_id).gte("created_at", cutoff).execute()
+    if len(recent.data) >= 3:
+        # Pluie de KC : 10 KC à chaque viewer (utilisateurs avec last_seen récent)
+        viewers = get_online_users(threshold_minutes=2)  # viewers actifs dans les 2 dernières minutes
+        for v in viewers:
+            wallet = supabase.table("wallets").select("*").eq("user_id", v["id"]).execute()
+            if wallet.data:
+                new_bal = wallet.data[0]["kongo_balance"] + 10
+                supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", v["id"]).execute()
+        # Notification
+        supabase.table("stream_chat").insert({
+            "stream_id": stream_id,
+            "user_id": None,  # message système
+            "message": "🎉 COMBO TRIADIQUE ! Une pluie de 10 KC pour tous les viewers !",
+            "created_at": datetime.now().isoformat()
+        }).execute()
+        return True
+    return False
+
 def send_gift(stream_id, gift_id):
-    """Envoie un cadeau sur un stream."""
-    # Récupérer le cadeau
     gift = supabase.table("gift_definitions").select("*").eq("id", gift_id).single().execute()
     if not gift.data:
         st.error("Cadeau inconnu.")
         return False
     gift = gift.data
     cost = gift["kc_cost"]
-    # Vérifier solde
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
     if not wallet.data or wallet.data[0]["kongo_balance"] < cost:
         st.error("Solde insuffisant.")
         return False
-    # Débiter
     new_balance = wallet.data[0]["kongo_balance"] - cost
     supabase.table("wallets").update({"kongo_balance": new_balance}).eq("user_id", user.id).execute()
-    # Ajouter au stream_gifts
+    # Enregistrer le don
     supabase.table("stream_gifts").insert({
         "stream_id": stream_id,
         "sender_id": user.id,
@@ -345,45 +379,98 @@ def send_gift(stream_id, gift_id):
         "combo_count": 1,
         "created_at": datetime.now().isoformat()
     }).execute()
-    # Augmenter le resonance_score du stream
-    stream = supabase.table("ttu_streams").select("resonance_score").eq("id", stream_id).single().execute()
-    new_score = stream.data["resonance_score"] + gift["ttu_impact"]
-    supabase.table("ttu_streams").update({"resonance_score": new_score}).eq("id", stream_id).execute()
+    # Mettre à jour le total des dons du profile
+    profile = supabase.table("profiles").select("total_donations, donation_level").eq("id", user.id).single().execute()
+    new_total = profile.data["total_donations"] + cost
+    new_level = int(new_total / 1000)  # ex: niveau 1 pour 1000 KC donnés
+    supabase.table("profiles").update({
+        "total_donations": new_total,
+        "donation_level": new_level
+    }).eq("id", user.id).execute()
+    # Augmenter la jauge de stabilité du stream
+    stream = supabase.table("ttu_streams").select("stability_gauge").eq("id", stream_id).single().execute()
+    new_gauge = min(100, stream.data["stability_gauge"] + gift["ttu_impact"] * 10)  # chaque impact ajoute jusqu'à 10%
+    supabase.table("ttu_streams").update({"stability_gauge": new_gauge}).eq("id", stream_id).execute()
+    # Vérifier combo
+    check_and_trigger_combo(stream_id, gift_id, user.id)
     # Animation
-    st.balloons()
+    if gift["animation_type"] == "full_screen":
+        st.balloons()
+    elif gift["animation_type"] == "particle":
+        st.snow()  # ou autre effet
+    elif gift["animation_type"] == "wave":
+        st.toast("🌊 Effet de vague !")
     return True
 
-# =====================================================
-# NAVIGATION (SIDEBAR)
-# =====================================================
-st.sidebar.image("https://via.placeholder.com/150x50?text=GEN-Z", width=150)
-st.sidebar.write(f"Connecté en tant que : **{profile['username']}**")
-if is_admin():
-    st.sidebar.markdown("🔑 **Administrateur**")
-st.sidebar.write(f"ID : {user.id[:8]}...")
-
-# Affichage des utilisateurs en ligne
-with st.sidebar.expander("🟢 En ligne", expanded=False):
-    online = get_online_users()
-    if online:
-        for u in online[:10]:
-            st.write(f"• {u['username']}")
-        if len(online) > 10:
-            st.write(f"... et {len(online)-10} autres")
+def get_donor_badge(level):
+    """Retourne un emoji/badge selon le niveau de donateur."""
+    if level == 0:
+        return ""
+    elif level < 5:
+        return "⭐"
+    elif level < 10:
+        return "🌟"
+    elif level < 20:
+        return "💫"
     else:
-        st.write("Aucun utilisateur en ligne")
-
-# Menu de navigation
-menu_options = ["🌐 Feed", "🎥 TTU Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "🎥 TTU Live", "💬 Panels", "⚙️ Paramètres"]
-if is_admin():
-    menu_options.append("🛡️ Admin")
-menu = st.sidebar.radio("Navigation", menu_options)
-
-if st.sidebar.button("🚪 Déconnexion"):
-    logout()
+        return "👑"
 
 # =====================================================
-# FONCTIONS UTILES (existantes, adaptées)
+# FONCTIONS POUR LES ÉMOJIS PREMIUM (amélioration)
+# =====================================================
+EMOJI_HIERARCHY = {
+    "🔥": {"label": "Hype", "cost": 10, "share": 8, "color": "#FF5722"},
+    "💎": {"label": "Pépite", "cost": 50, "share": 40, "color": "#4CAF50"},
+    "👑": {"label": "Légende", "cost": 100, "share": 80, "color": "#FFC107"}
+}
+
+def display_emoji_buttons(post_id, author_id):
+    """Affiche les boutons d'émoji premium avec style."""
+    cols = st.columns(len(EMOJI_HIERARCHY))
+    for i, (emoji, info) in enumerate(EMOJI_HIERARCHY.items()):
+        with cols[i]:
+            # Bouton stylisé
+            if st.button(
+                f"{emoji} {info['cost']} KC",
+                key=f"emoji_{post_id}_{emoji}",
+                help=info['label'],
+                use_container_width=True
+            ):
+                process_emoji_payment(post_id, author_id, emoji)
+
+def process_emoji_payment(post_id, author_id, emoji_type):
+    cost = EMOJI_HIERARCHY[emoji_type]["cost"]
+    share = EMOJI_HIERARCHY[emoji_type]["share"]
+    wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
+    if not wallet_res.data:
+        st.error("Portefeuille introuvable.")
+        return
+    wallet = wallet_res.data[0]
+    if wallet["kongo_balance"] < cost:
+        st.error(f"Solde insuffisant. Il vous manque {cost - wallet['kongo_balance']} KC.")
+        return
+    try:
+        new_bal = wallet["kongo_balance"] - cost
+        supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
+        author_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", author_id).execute()
+        if author_wallet_res.data:
+            author_wallet = author_wallet_res.data[0]
+            new_author_bal = author_wallet["kongo_balance"] + share
+            supabase.table("wallets").update({"kongo_balance": new_author_bal}).eq("user_id", author_id).execute()
+        supabase.table("reactions").insert({
+            "post_id": post_id,
+            "user_id": user.id,
+            "emoji": emoji_type,
+            "cost": cost
+        }).execute()
+        st.success(f"Réaction {emoji_type} envoyée !")
+        time.sleep(0.5)
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erreur lors du traitement de la réaction : {e}")
+
+# =====================================================
+# AUTRES FONCTIONS UTILES (inchangées)
 # =====================================================
 def like_post(post_id):
     try:
@@ -437,45 +524,36 @@ def get_post_stats(post_id):
     reactions_count = reactions_res.count if reactions_res.count else 0
     return {"likes": likes_count, "comments": comments_count, "reactions": reactions_count}
 
-EMOJI_HIERARCHY = {
-    "🔥": {"label": "Hype", "cost": 10, "share": 8},
-    "💎": {"label": "Pépite", "cost": 50, "share": 40},
-    "👑": {"label": "Légende", "cost": 100, "share": 80}
-}
+# =====================================================
+# NAVIGATION (SIDEBAR)
+# =====================================================
+st.sidebar.image("https://via.placeholder.com/150x50?text=GEN-Z", width=150)
+badge = get_donor_badge(profile.get("donation_level", 0))
+st.sidebar.write(f"Connecté en tant que : **{profile['username']}** {badge}")
+if is_admin():
+    st.sidebar.markdown("🔑 **Administrateur**")
+st.sidebar.write(f"ID : {user.id[:8]}...")
 
-def process_emoji_payment(post_id, author_id, emoji_type):
-    cost = EMOJI_HIERARCHY[emoji_type]["cost"]
-    share = EMOJI_HIERARCHY[emoji_type]["share"]
-    wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", user.id).execute()
-    if not wallet_res.data:
-        st.error("Portefeuille introuvable.")
-        return
-    wallet = wallet_res.data[0]
-    if wallet["kongo_balance"] < cost:
-        st.error(f"Solde insuffisant. Il vous manque {cost - wallet['kongo_balance']} KC.")
-        return
-    try:
-        new_bal = wallet["kongo_balance"] - cost
-        supabase.table("wallets").update({"kongo_balance": new_bal}).eq("user_id", user.id).execute()
-        author_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", author_id).execute()
-        if author_wallet_res.data:
-            author_wallet = author_wallet_res.data[0]
-            new_author_bal = author_wallet["kongo_balance"] + share
-            supabase.table("wallets").update({"kongo_balance": new_author_bal}).eq("user_id", author_id).execute()
-        supabase.table("reactions").insert({
-            "post_id": post_id,
-            "user_id": user.id,
-            "emoji": emoji_type,
-            "cost": cost
-        }).execute()
-        st.success(f"Réaction {emoji_type} envoyée !")
-        time.sleep(0.5)
-        st.rerun()
-    except Exception as e:
-        st.error(f"Erreur lors du traitement de la réaction : {e}")
+with st.sidebar.expander("🟢 En ligne", expanded=False):
+    online = get_online_users()
+    if online:
+        for u in online[:10]:
+            st.write(f"• {u['username']}")
+        if len(online) > 10:
+            st.write(f"... et {len(online)-10} autres")
+    else:
+        st.write("Aucun utilisateur en ligne")
+
+menu_options = ["🌐 Feed", "🎥 TTU Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "🎥 TTU Live", "💬 Panels", "⚙️ Paramètres"]
+if is_admin():
+    menu_options.append("🛡️ Admin")
+menu = st.sidebar.radio("Navigation", menu_options)
+
+if st.sidebar.button("🚪 Déconnexion"):
+    logout()
 
 # =====================================================
-# PAGE : FEED CLASSIQUE
+# PAGE : FEED CLASSIQUE (avec émojis améliorés)
 # =====================================================
 def feed_page():
     st.header("🌐 Fil d'actualité")
@@ -509,7 +587,6 @@ def feed_page():
                         )
                         media_path = file_name
                         media_type = content_type
-                        # Génération des couches TTU
                         thumb_bytes, spectral_density = generate_ttu_layers(media_file.getvalue())
                         if thumb_bytes:
                             thumb_name = f"ttu/{user.id}/{uuid.uuid4()}_thumb.jpg"
@@ -530,7 +607,6 @@ def feed_page():
                     }
                     post_res = supabase.table("posts").insert(post_data).execute()
                     post_id = post_res.data[0]["id"]
-                    # Insérer les métadonnées TTU
                     if ttu_thumb:
                         supabase.table("ttu_spectral_metadata").insert({
                             "post_id": post_id,
@@ -545,7 +621,6 @@ def feed_page():
                 except Exception as e:
                     st.error(f"Erreur lors de la publication : {e}")
 
-    # Récupération des posts via la vue triadic_feed
     posts = supabase.table("v_triadic_feed").select("*").order("created_at", desc=True).limit(50).execute()
     if not posts.data:
         st.info("Aucun post pour le moment. Sois le premier à poster !")
@@ -555,8 +630,7 @@ def feed_page():
         with st.container():
             col1, col2 = st.columns([1, 20])
             with col1:
-                # Photo de profil (à récupérer séparément)
-                prof = supabase.table("profiles").select("username, profile_pic").eq("id", post["user_id"]).single().execute()
+                prof = supabase.table("profiles").select("username, profile_pic, donation_level").eq("id", post["user_id"]).single().execute()
                 pic = prof.data.get("profile_pic") if prof.data else None
                 if pic:
                     st.image(pic, width=40)
@@ -564,22 +638,19 @@ def feed_page():
                     st.image("https://via.placeholder.com/40", width=40)
             with col2:
                 username = prof.data["username"] if prof.data else "inconnu"
-                st.markdown(f"**{username}** · {post['created_at'][:10]}")
+                badge = get_donor_badge(prof.data.get("donation_level", 0)) if prof.data else ""
+                st.markdown(f"**{username}** {badge} · {post['created_at'][:10]}")
                 st.write(post["text"])
 
-            # Affichage du média avec fallback TTU
             if post.get("media_path"):
-                # Afficher d'abord le thumbnail si disponible
                 thumb_placeholder = st.empty()
                 if post.get("ttu_preview"):
                     thumb_url = get_signed_url("media", post["ttu_preview"])
                     if thumb_url:
                         thumb_placeholder.image(thumb_url, use_container_width=True)
-                # Charger le média HD (simulé)
                 file_url = get_signed_url("media", post["media_path"])
                 if file_url:
                     if post.get("media_type") and "image" in post["media_type"]:
-                        # Remplacer le thumbnail par l'image HD après un délai simulé
                         time.sleep(0.5)
                         thumb_placeholder.image(file_url, use_container_width=True)
                     elif post.get("media_type") and "video" in post["media_type"]:
@@ -603,16 +674,9 @@ def feed_page():
                     if st.button("Envoyer", key=f"send_{post['id']}"):
                         add_comment(post["id"], new_comment)
             with col_c:
-                if st.button("🔥 (10 KC)", key=f"fire_{post['id']}"):
-                    process_emoji_payment(post["id"], post["user_id"], "🔥")
-            with col_d:
-                if st.button("💎 (50 KC)", key=f"diamond_{post['id']}"):
-                    process_emoji_payment(post["id"], post["user_id"], "💎")
-            with col_e:
-                if st.button("👑 (100 KC)", key=f"crown_{post['id']}"):
-                    process_emoji_payment(post["id"], post["user_id"], "👑")
+                # Boutons émoji premium améliorés
+                display_emoji_buttons(post["id"], post["user_id"])
             with col_f:
-                # Bouton partager
                 if st.button("🔁 Partager", key=f"share_{post['id']}"):
                     comment = st.text_input("Ajouter un commentaire (optionnel)", key=f"share_comment_{post['id']}")
                     if st.button("Confirmer le partage", key=f"share_confirm_{post['id']}"):
@@ -630,19 +694,16 @@ def feed_page():
 # =====================================================
 def ttu_feed_page():
     st.header("🎥 TTU Feed - Swipe vertical")
-    # Récupérer les posts avec métadonnées TTU
     posts = supabase.table("v_triadic_feed").select("*").order("created_at", desc=True).execute()
     if not posts.data:
         st.info("Aucun post disponible.")
         return
 
-    # Initialiser l'index du post courant
     if "ttu_feed_index" not in st.session_state:
         st.session_state.ttu_feed_index = 0
     index = st.session_state.ttu_feed_index
     total = len(posts.data)
 
-    # Navigation
     col1, col2, col3 = st.columns([1, 6, 1])
     with col1:
         if st.button("⬆️", disabled=(index == 0)):
@@ -656,27 +717,22 @@ def ttu_feed_page():
             st.rerun()
 
     post = posts.data[index]
-    # Afficher le post en grand
     with st.container():
-        prof = supabase.table("profiles").select("username, profile_pic").eq("id", post["user_id"]).single().execute()
+        prof = supabase.table("profiles").select("username, profile_pic, donation_level").eq("id", post["user_id"]).single().execute()
         username = prof.data["username"] if prof.data else "inconnu"
-        st.markdown(f"**{username}**")
+        badge = get_donor_badge(prof.data.get("donation_level", 0)) if prof.data else ""
+        st.markdown(f"**{username}** {badge}")
         st.write(post["text"])
 
-        # Gestion du média
         if post.get("media_path"):
-            # Conteneur dynamique
             media_placeholder = st.empty()
-            # Afficher d'abord le thumbnail
             if post.get("ttu_preview"):
                 thumb_url = get_signed_url("media", post["ttu_preview"])
                 if thumb_url:
                     media_placeholder.image(thumb_url, use_container_width=True)
-            # Charger la HD
             file_url = get_signed_url("media", post["media_path"])
             if file_url:
                 if post.get("media_type") and "image" in post["media_type"]:
-                    # Remplacer après un délai
                     time.sleep(0.3)
                     media_placeholder.image(file_url, use_container_width=True)
                 elif post.get("media_type") and "video" in post["media_type"]:
@@ -687,7 +743,6 @@ def ttu_feed_page():
         stats = get_post_stats(post["id"])
         st.markdown(f"❤️ {stats['likes']} | 💬 {stats['comments']} | 🔥 {stats['reactions']}")
 
-        # Boutons d'action
         col_a, col_b, col_c, col_d, col_e = st.columns(5)
         with col_a:
             if st.button("❤️", key=f"like_{post['id']}"):
@@ -696,16 +751,11 @@ def ttu_feed_page():
             if st.button("💬", key=f"comment_{post['id']}"):
                 st.session_state[f"show_comment_{post['id']}"] = True
         with col_c:
-            if st.button("🔥", key=f"fire_{post['id']}"):
-                process_emoji_payment(post["id"], post["user_id"], "🔥")
+            display_emoji_buttons(post["id"], post["user_id"])
         with col_d:
-            if st.button("💎", key=f"diamond_{post['id']}"):
-                process_emoji_payment(post["id"], post["user_id"], "💎")
-        with col_e:
-            if st.button("👑", key=f"crown_{post['id']}"):
-                process_emoji_payment(post["id"], post["user_id"], "👑")
+            if st.button("🔁 Partager", key=f"share_{post['id']}"):
+                st.session_state[f"show_share_{post['id']}"] = True
 
-        # Affichage conditionnel des commentaires
         if st.session_state.get(f"show_comment_{post['id']}", False):
             comments = supabase.table("comments").select("*, profiles(username)").eq("post_id", post["id"]).order("created_at").execute()
             for c in comments.data:
@@ -716,6 +766,14 @@ def ttu_feed_page():
                 st.session_state[f"show_comment_{post['id']}"] = False
                 st.rerun()
 
+        if st.session_state.get(f"show_share_{post['id']}", False):
+            comment = st.text_input("Ajouter un commentaire (optionnel)", key=f"share_comment_{post['id']}")
+            if st.button("Confirmer le partage", key=f"share_confirm_{post['id']}"):
+                if share_post(post["id"], user.id, comment):
+                    st.success("Post partagé !")
+                    st.session_state[f"show_share_{post['id']}"] = False
+                    st.rerun()
+
         if post["user_id"] == user.id or is_admin():
             if st.button("🗑️ Supprimer", key=f"del_{post['id']}"):
                 delete_post(post["id"])
@@ -725,10 +783,41 @@ def ttu_feed_page():
 # =====================================================
 def profile_page(profile_user_id=None):
     if profile_user_id is None or profile_user_id == user.id:
-        # Mon profil
         st.header("👤 Mon Profil")
-        # ... (code existant inchangé)
-        # Ajout de l'affichage des abonnés/abonnements avec possibilité de voir la liste
+        with st.expander("Changer ma photo de profil", expanded=False):
+            uploaded_file = st.file_uploader("Choisir une image", type=["png", "jpg", "jpeg"])
+            if uploaded_file:
+                if uploaded_file.size > 5 * 1024 * 1024:
+                    st.error("Image trop volumineuse (max 5 Mo).")
+                    st.stop()
+                try:
+                    ext = uploaded_file.name.split(".")[-1]
+                    file_name = f"avatars/{user.id}/{uuid.uuid4()}.{ext}"
+                    supabase.storage.from_("avatars").upload(
+                        path=file_name,
+                        file=uploaded_file.getvalue(),
+                        file_options={"content-type": f"image/{ext}"}
+                    )
+                    public_url = supabase.storage.from_("avatars").get_public_url(file_name)
+                    supabase.table("profiles").update({"profile_pic": public_url}).eq("id", user.id).execute()
+                    st.success("Photo de profil mise à jour")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de l'upload : {e}")
+        with st.form("edit_profile"):
+            username = st.text_input("Nom d'utilisateur", value=profile["username"])
+            bio = st.text_area("Bio", value=profile.get("bio", ""))
+            location = st.text_input("Localisation", value=profile.get("location", ""))
+            if st.form_submit_button("Mettre à jour"):
+                supabase.table("profiles").update({
+                    "username": username,
+                    "bio": bio,
+                    "location": location
+                }).eq("id", user.id).execute()
+                st.success("Profil mis à jour")
+                st.cache_data.clear()
+                st.rerun()
         st.subheader("Mes statistiques")
         post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute()
         st.metric("Posts publiés", post_count.count)
@@ -737,17 +826,15 @@ def profile_page(profile_user_id=None):
         col1, col2 = st.columns(2)
         col1.metric("Abonnés", followers.count)
         col2.metric("Abonnements", following.count)
-        # Afficher les abonnés (bouton)
-        if st.button("Voir mes abonnés"):
-            st.write("Liste des abonnés à venir")
+        st.metric("Niveau donateur", profile.get("donation_level", 0))
+        st.metric("Total KC donnés", profile.get("total_donations", 0))
     else:
-        # Profil public d'un autre utilisateur
         prof = supabase.table("profiles").select("*").eq("id", profile_user_id).single().execute()
         if not prof.data:
             st.error("Utilisateur introuvable.")
             return
         p = prof.data
-        st.header(f"👤 Profil de {p['username']}")
+        st.header(f"👤 Profil de {p['username']} {get_donor_badge(p.get('donation_level',0))}")
         col1, col2 = st.columns([1, 3])
         with col1:
             if p.get("profile_pic"):
@@ -758,7 +845,7 @@ def profile_page(profile_user_id=None):
             st.write(f"**Bio :** {p.get('bio', '')}")
             st.write(f"**Localisation :** {p.get('location', '')}")
             st.write(f"Membre depuis : {p['created_at'][:10]}")
-        # Bouton follow/unfollow
+            st.write(f"Niveau donateur : {p.get('donation_level',0)}")
         if is_following(user.id, profile_user_id):
             if st.button("Ne plus suivre"):
                 unfollow_user(user.id, profile_user_id)
@@ -767,18 +854,16 @@ def profile_page(profile_user_id=None):
             if st.button("Suivre"):
                 follow_user(user.id, profile_user_id)
                 st.rerun()
-        # Afficher les posts de cet utilisateur
         st.subheader("Posts récents")
         posts = supabase.table("posts").select("*").eq("user_id", profile_user_id).order("created_at", desc=True).limit(20).execute()
         for post in posts.data:
             st.write(f"**{post['created_at'][:10]}** : {post['text'][:100]}...")
 
 # =====================================================
-# PAGE : MESSAGES (avec chiffrement sel dynamique)
+# PAGE : MESSAGES (inchangée)
 # =====================================================
 def messages_page():
     st.header("✉️ Messagerie privée (chiffrée de bout en bout)")
-    # Récupérer les contacts
     sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
     received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
     contact_ids = set()
@@ -786,11 +871,9 @@ def messages_page():
         contact_ids.add(msg["recipient"])
     for msg in received.data:
         contact_ids.add(msg["sender"])
-
     if not contact_ids:
         st.info("Aucune conversation pour l'instant.")
         return
-
     contacts = supabase.table("profiles").select("id, username").in_("id", list(contact_ids)).execute()
     contact_dict = {c["id"]: c["username"] for c in contacts.data}
     selected_contact = st.selectbox(
@@ -798,17 +881,13 @@ def messages_page():
         options=list(contact_dict.keys()),
         format_func=lambda x: contact_dict[x]
     )
-
     if selected_contact:
         st.subheader(f"Discussion avec {contact_dict[selected_contact]} (messages chiffrés)")
-        # Récupérer les messages
         messages = supabase.table("messages").select("*").or_(
             f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
             f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
         ).order("created_at").limit(100).execute()
-
         for msg in messages.data:
-            # Déchiffrer avec le sender_id du message
             decrypted_text = decrypt_private_message(msg.get("text", ""), msg["sender"])
             if msg["sender"] == user.id:
                 st.markdown(
@@ -822,7 +901,6 @@ def messages_page():
                     f"<b>{contact_dict[selected_contact]}</b> : {decrypted_text}</div>",
                     unsafe_allow_html=True
                 )
-
         with st.form("new_message"):
             msg_text = st.text_area("Votre message")
             if st.form_submit_button("Envoyer (chiffré)"):
@@ -844,7 +922,7 @@ def messages_page():
 # =====================================================
 def marketplace_page():
     st.header("🏪 Marketplace")
-    # ... (code existant, inchangé)
+    # ... (code existant, inchangé - à copier depuis l'original)
 
 # =====================================================
 # PAGE : WALLET (inchangée)
@@ -854,42 +932,48 @@ def wallet_page():
     # ... (code existant, inchangé)
 
 # =====================================================
-# PAGE : TTU LIVE
+# PAGE : TTU LIVE (avec cadeaux et jauge)
 # =====================================================
 def ttu_live_page():
     st.header("🎥 TTU Live - Streams en direct")
     tab1, tab2 = st.tabs(["📺 Voir les streams", "🎬 Créer un stream"])
     with tab1:
-        # Liste des streams actifs
-        streams = supabase.table("ttu_streams").select("*, profiles!inner(username, profile_pic)").eq("is_active", True).order("created_at", desc=True).execute()
+        streams = supabase.table("ttu_streams").select("*, profiles!inner(username, profile_pic, donation_level)").eq("is_active", True).order("created_at", desc=True).execute()
         if not streams.data:
             st.info("Aucun stream en cours.")
         else:
             for stream in streams.data:
-                with st.expander(f"{stream['title']} par {stream['profiles']['username']}"):
+                with st.expander(f"{stream['title']} par {stream['profiles']['username']} {get_donor_badge(stream['profiles']['donation_level'])}"):
                     st.write(stream.get('description', ''))
+                    # Jauge de stabilité
+                    gauge = stream.get('stability_gauge', 0.0)
+                    st.progress(gauge/100, text=f"Stabilité du flux : {gauge:.1f}%")
+                    if gauge >= 100:
+                        st.success("✨ MODE TTU-VISION ACTIVÉ ! L'image devient spectrale.")
                     # Lecteur vidéo
                     if stream.get('video_url'):
                         st.video(stream['video_url'])
                     else:
                         st.warning("Flux non disponible")
-                    # Affichage du score de résonance
                     st.metric("Résonance", f"{stream['resonance_score']:.2f}")
                     # Cadeaux
                     st.subheader("Envoyer un cadeau")
                     gifts = supabase.table("gift_definitions").select("*").execute()
                     if gifts.data:
-                        cols = st.columns(len(gifts.data))
+                        # Afficher les cadeaux en grille
+                        cols = st.columns(5)
                         for i, gift in enumerate(gifts.data):
-                            with cols[i]:
-                                if st.button(f"{gift['emoji']} {gift['name']} ({gift['kc_cost']} KC)", key=f"gift_{stream['id']}_{gift['id']}"):
+                            with cols[i % 5]:
+                                if st.button(f"{gift['emoji']} {gift['name']}\n({gift['kc_cost']} KC)", key=f"gift_{stream['id']}_{gift['id']}"):
                                     if send_gift(stream['id'], gift['id']):
                                         st.success(f"Cadeau {gift['name']} envoyé !")
-                    # Chat simplifié
+                                        st.rerun()
+                    # Chat
                     st.subheader("Chat en direct")
-                    chat_msgs = supabase.table("stream_chat").select("*, profiles(username)").eq("stream_id", stream['id']).order("created_at").limit(50).execute()
+                    chat_msgs = supabase.table("stream_chat").select("*, profiles(username, donation_level)").eq("stream_id", stream['id']).order("created_at").limit(50).execute()
                     for msg in chat_msgs.data:
-                        st.text(f"{msg['profiles']['username']}: {msg['message']}")
+                        badge = get_donor_badge(msg['profiles']['donation_level'])
+                        st.text(f"{msg['profiles']['username']} {badge}: {msg['message']}")
                     new_msg = st.text_input("Votre message", key=f"chat_{stream['id']}")
                     if st.button("Envoyer", key=f"send_chat_{stream['id']}"):
                         supabase.table("stream_chat").insert({
@@ -913,7 +997,7 @@ def ttu_live_page():
                     st.error("Veuillez remplir tous les champs.")
 
 # =====================================================
-# PAGE : PANELS (discussions structurées)
+# PAGE : PANELS (inchangée)
 # =====================================================
 def panels_page():
     st.header("💬 Panels de discussion")
@@ -925,22 +1009,19 @@ def panels_page():
         else:
             for panel in panels.data:
                 with st.expander(f"{panel['title']} (créé par {panel['profiles']['username']})"):
-                    # Jauge de stabilité
                     stability = panel.get('current_stability', 1.0)
                     entropy = panel.get('entropy_level', 0.0)
                     st.progress(stability, text=f"Stabilité : {stability:.2f}")
                     st.caption(f"Entropie : {entropy:.2f}")
-                    # Messages du panel
-                    msgs = supabase.table("messages").select("*, profiles(username)").eq("panel_id", panel['id']).order("created_at").limit(50).execute()
+                    msgs = supabase.table("messages").select("*, profiles(username, donation_level)").eq("panel_id", panel['id']).order("created_at").limit(50).execute()
                     for msg in msgs.data:
-                        st.markdown(f"**{msg['profiles']['username']}** : {msg['text']}")
-                    # Saisie de message
+                        badge = get_donor_badge(msg['profiles']['donation_level'])
+                        st.markdown(f"**{msg['profiles']['username']}** {badge} : {msg['text']}")
                     new_msg = st.text_input("Votre message", key=f"panel_msg_{panel['id']}")
                     if st.button("Envoyer", key=f"panel_send_{panel['id']}"):
-                        # Le message n'est pas chiffré pour les panels publics
                         supabase.table("messages").insert({
                             "sender": user.id,
-                            "recipient": None,  # pas de destinataire privé
+                            "recipient": None,
                             "text": new_msg,
                             "panel_id": panel['id'],
                             "created_at": datetime.now().isoformat()
@@ -983,7 +1064,6 @@ if menu == "🌐 Feed":
 elif menu == "🎥 TTU Feed":
     ttu_feed_page()
 elif menu == "👤 Mon Profil":
-    # Vérifier si on consulte un autre profil via query params (à implémenter)
     profile_page()
 elif menu == "✉️ Messages":
     messages_page()

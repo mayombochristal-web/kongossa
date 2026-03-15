@@ -9,6 +9,22 @@ import hmac
 import base64
 from cryptography.fernet import Fernet
 
+def get_fernet_from_key(secret: str) -> Fernet:
+    """Dérive une clé Fernet à partir du secret partagé."""
+    # Fernet nécessite une clé de 32 bytes en base64
+    # On utilise SHA256 pour obtenir 32 bytes, puis base64
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    return Fernet(key)
+
+def encrypt_text(plaintext: str) -> str:
+    """Chiffre un texte avec la clé stockée en session."""
+    fernet = get_fernet_from_key(st.session_state.current_k)
+    return fernet.encrypt(plaintext.encode()).decode()
+
+def decrypt_text(ciphertext: str) -> str:
+    """Déchiffre un texte avec la clé stockée en session."""
+    fernet = get_fernet_from_key(st.session_state.current_k)
+    return fernet.decrypt(ciphertext.encode()).decode()
 # =====================================================
 # CONFIGURATION
 # =====================================================
@@ -585,8 +601,7 @@ def messages_page():
                 is_me = m["sender"] == user.id
                 author = user_map.get(m["sender"], "Inconnu")
                 try:
-                    # Appel sans second argument (la clé est gérée ailleurs)
-                    clear_text = decrypt_text(m["text"])
+                    clear_text = decrypt_text(m["text"])  # adapte selon ta fonction
                     with st.chat_message("user" if is_me else "assistant"):
                         st.markdown(f"**{author}** : {clear_text}")
                 except Exception:
@@ -594,15 +609,14 @@ def messages_page():
 
         # Zone de saisie
         if prompt := st.chat_input("Projeter un message..."):
-            # Appel sans second argument
-            encrypted_val = encrypt_text(prompt)
+            encrypted_val = encrypt_text(prompt)  # adapte selon ta fonction
             supabase.table("messages").insert({
                 "sender": user.id,
                 "tunnel_id": tunnel_id,
                 "text": encrypted_val,
-                "created_at": datetime.now(timezone.utc).isoformat()
+                "created_at": datetime.utcnow().isoformat()  # ← correction ici
             }).execute()
-            st.session_state[last_ts_key] = datetime.now(timezone.utc).isoformat()
+            st.session_state[last_ts_key] = datetime.utcnow().isoformat()  # ← correction ici
             st.rerun()  # relance uniquement ce fragment
 
         # --- BOUTON MANUEL D'ACTUALISATION ---

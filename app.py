@@ -481,94 +481,83 @@ def profile_page():
     col2.metric("Abonnements", following.count)
 
 def messages_page():
-    st.header("🌌 Tunnel Souverain (TTU-MC³)")
-    
-    # --- 1. Établissement de la Courbure K (Souveraineté) ---
-    with st.sidebar:
-        st.subheader("Paramètres de Stabilité")
-        # Ici, on utilise soit ta fernet_key globale, soit un code k spécifique
-        code_k = st.text_input("Clé de Courbure K (Code Secret)", type="password")
-        
-        if not code_k:
-            st.info("Le tunnel est en **état fantôme**. Stabilisez la phase avec votre clé.")
-            st.stop()
-            
-        # On peut imaginer que la clé de déchiffrement est dérivée du code_k
-        # Pour cet exemple, on utilise ta fonction existante decrypt_text
-        st.success("✅ Phase Cohérente (ΦC)")
+    st.title("🌌 Centre de Contrôle des Tunnels")
 
-    # --- 2. Récupération des Contacts ---
-    # (On garde ta logique de récupération initiale)
-    sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
-    received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
-    contact_ids = set(msg["recipient"] for msg in sent.data) | set(msg["sender"] for msg in received.data)
+    # --- SECTION A : GESTION DES TUNNELS (Souveraineté) ---
+    with st.expander("🛠️ Créer ou Gérer mes Tunnels"):
+        t_name = st.text_input("Nom du nouveau tunnel")
+        t_type = st.radio("Type de visibilité", ["Secret (Privé)", "Visible (Public)"])
+        t_key = ""
+        if t_type == "Secret (Privé)":
+            t_key = st.text_input("Définir la Courbure K (Clé Secrète)", type="password")
+
+        if st.button("Initialiser le Tunnel"):
+            k_hash = hashlib.sha256(t_key.encode()).hexdigest() if t_key else None
+            supabase.table("tunnels").insert({
+                "name": t_name,
+                "creator_id": user.id,
+                "is_private": (t_type == "Secret (Privé)"),
+                "k_hash": k_hash
+            }).execute()
+            st.success("Tunnel projeté dans le réseau !")
+            st.rerun()
+
+    # --- SECTION B : RECHERCHE & ABONNEMENT ---
+    st.divider()
+    col1, col2 = st.columns(2)
     
-    if not contact_ids:
-        st.info("Aucune trace dans le tunnel.")
+    with col1:
+        st.subheader("🔎 Explorer les Tunnels Publics")
+        public_tunnels = supabase.table("tunnels").select("*").eq("is_private", False).execute()
+        for t in public_tunnels.data:
+            if st.button(f"S'abonner à {t['name']}", key=f"sub_{t['id']}"):
+                supabase.table("subscriptions").upsert({"user_id": user.id, "tunnel_id": t["id"]}).execute()
+                st.toast(f"Abonné à {t['name']}")
+
+    with col2:
+        st.subheader("🔑 Accéder à un Tunnel Secret")
+        secret_input = st.text_input("Entrer une clé K pour rejoindre", type="password")
+        if secret_input:
+            k_check = hashlib.sha256(secret_input.encode()).hexdigest()
+            target = supabase.table("tunnels").select("*").eq("k_hash", k_check).execute()
+            if target.data:
+                st.success(f"Tunnel '{target.data[0]['name']}' stabilisé !")
+                if st.button("S'y abonner"):
+                    supabase.table("subscriptions").upsert({"user_id": user.id, "tunnel_id": target.data[0]['id']}).execute()
+            else:
+                st.error("Courbure K introuvable (État Fantôme)")
+
+    # --- SECTION C : MESSAGERIE (VRAI TEMPS RÉEL) ---
+    st.divider()
+    my_subs = supabase.table("subscriptions").select("tunnel_id, tunnels(name)").eq("user_id", user.id).execute()
+    
+    if not my_subs.data:
+        st.info("Vous n'êtes abonné à aucun tunnel.")
         return
 
-    contacts = supabase.table("profiles").select("id, username").in_("id", list(contact_ids)).execute()
-    contact_dict = {c["id"]: c["username"] for c in contacts.data}
+    # Choix du tunnel actif
+    tunnel_options = {s['tunnel_id']: s['tunnels']['name'] for s in my_subs.data}
+    active_t_id = st.selectbox("Sélectionner le tunnel actif", options=list(tunnel_options.keys()), format_func=lambda x: tunnel_options[x])
+
+    # Affichage des messages
+    messages = supabase.table("messages").select("*").eq("tunnel_id", active_t_id).order("created_at").execute()
     
-    selected_contact = st.selectbox("Interlocuteur", options=list(contact_dict.keys()), 
-                                    format_func=lambda x: contact_dict[x])
+    chat_box = st.container()
+    for m in messages.data:
+        is_me = m["sender_id"] == user.id
+        with chat_box.chat_message("user" if is_me else "assistant"):
+            # On déchiffre ici si le tunnel est privé
+            st.write(decrypt_text(m["text"]))
 
-    if selected_contact:
-        # --- 3. LE TUNNEL TEMPS RÉEL (Plus besoin de recharger) ---
-        # On crée un conteneur pour les messages qui va se rafraîchir
-        chat_placeholder = st.empty()
-        
-        # Fonction de rendu des messages
-        def refresh_tunnel():
-            messages = supabase.table("messages").select("*").or_(
-                f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
-                f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
-            ).order("created_at", descending=False).execute()
-            
-            with chat_placeholder.container():
-                for msg in messages.data:
-                    try:
-                        # Dissipation de l'état fantôme vers le texte clair
-                        # On utilise ta fonction decrypt_text
-                        raw_text = decrypt_text(msg.get("text", ""))
-                        
-                        side = "right" if msg["sender"] == user.id else "left"
-                        color = "#dcf8c6" if msg["sender"] == user.id else "#f1f0f0"
-                        align = "flex-end" if msg["sender"] == user.id else "flex-start"
-                        
-                        st.markdown(
-                            f"""<div style="display: flex; flex-direction: column; align-items: {align}; margin-bottom: 10px;">
-                                <div style="background-color: {color}; padding: 10px; border-radius: 15px; max-width: 70%;">
-                                    {raw_text}
-                                </div>
-                            </div>""", unsafe_allow_html=True)
-                    except:
-                        st.warning("⚠️ Instabilité détectée sur un message (Δk/k)")
-
-        # Affichage initial
-        refresh_tunnel()
-
-        # --- 4. ENVOI INSTANTANÉ ---
-        with st.form("projection", clear_on_submit=True):
-            msg_text = st.text_input("Message...")
-            submit = st.form_submit_button("Projeter (Envoyer)")
-            
-            if submit and msg_text.strip():
-                encrypted_b64 = encrypt_text(msg_text)
-                supabase.table("messages").insert({
-                    "sender": user.id,
-                    "recipient": selected_contact,
-                    "text": encrypted_b64,
-                    "created_at": datetime.now().isoformat()
-                }).execute()
-                # On force un rafraîchissement immédiat de l'UI
-                st.rerun()
-
-        # --- 5. L'AUTO-STABILISATEUR (Poll intermittent) ---
-        # Pour une vraie expérience WhatsApp, on demande à Streamlit de 
-        # vérifier la base toutes les 5 secondes sans que l'utilisateur ne clique.
-        time.sleep(5)
-        st.rerun()
+    # Envoi avec vidage automatique (st.chat_input)
+    if prompt := st.chat_input("Écrire dans le tunnel..."):
+        encrypted_msg = encrypt_text(prompt)
+        supabase.table("messages").insert({
+            "tunnel_id": active_t_id,
+            "sender_id": user.id,
+            "text": encrypted_msg
+        }).execute()
+        st.rerun() # Rafraîchissement immédiat pour vider le champ et afficher le SMS
 
 def marketplace_page():
     st.header("🏪 Marketplace")

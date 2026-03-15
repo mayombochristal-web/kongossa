@@ -479,64 +479,96 @@ def profile_page():
     col1, col2 = st.columns(2)
     col1.metric("Abonnés", followers.count)
     col2.metric("Abonnements", following.count)
+
 def messages_page():
-    st.header("✉️ Messagerie privée (chiffrée de bout en bout)")
+    st.header("🌌 Tunnel Souverain (TTU-MC³)")
+    
+    # --- 1. Établissement de la Courbure K (Souveraineté) ---
+    with st.sidebar:
+        st.subheader("Paramètres de Stabilité")
+        # Ici, on utilise soit ta fernet_key globale, soit un code k spécifique
+        code_k = st.text_input("Clé de Courbure K (Code Secret)", type="password")
+        
+        if not code_k:
+            st.info("Le tunnel est en **état fantôme**. Stabilisez la phase avec votre clé.")
+            st.stop()
+            
+        # On peut imaginer que la clé de déchiffrement est dérivée du code_k
+        # Pour cet exemple, on utilise ta fonction existante decrypt_text
+        st.success("✅ Phase Cohérente (ΦC)")
+
+    # --- 2. Récupération des Contacts ---
+    # (On garde ta logique de récupération initiale)
     sent = supabase.table("messages").select("recipient").eq("sender", user.id).execute()
     received = supabase.table("messages").select("sender").eq("recipient", user.id).execute()
-    contact_ids = set()
-    for msg in sent.data:
-        contact_ids.add(msg["recipient"])
-    for msg in received.data:
-        contact_ids.add(msg["sender"])
+    contact_ids = set(msg["recipient"] for msg in sent.data) | set(msg["sender"] for msg in received.data)
+    
     if not contact_ids:
-        st.info("Aucune conversation pour l'instant.")
+        st.info("Aucune trace dans le tunnel.")
         return
 
     contacts = supabase.table("profiles").select("id, username").in_("id", list(contact_ids)).execute()
     contact_dict = {c["id"]: c["username"] for c in contacts.data}
-    selected_contact = st.selectbox(
-        "Choisir un contact",
-        options=list(contact_dict.keys()),
-        format_func=lambda x: contact_dict[x]
-    )
+    
+    selected_contact = st.selectbox("Interlocuteur", options=list(contact_dict.keys()), 
+                                    format_func=lambda x: contact_dict[x])
+
     if selected_contact:
-        st.subheader(f"Discussion avec {contact_dict[selected_contact]} (messages chiffrés)")
-        # Récupérer les messages avec limite pour éviter la surcharge
-        messages = supabase.table("messages").select("*").or_(
-            f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
-            f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
-        ).order("created_at").limit(100).execute()
+        # --- 3. LE TUNNEL TEMPS RÉEL (Plus besoin de recharger) ---
+        # On crée un conteneur pour les messages qui va se rafraîchir
+        chat_placeholder = st.empty()
+        
+        # Fonction de rendu des messages
+        def refresh_tunnel():
+            messages = supabase.table("messages").select("*").or_(
+                f"and(sender.eq.{user.id},recipient.eq.{selected_contact}),"
+                f"and(sender.eq.{selected_contact},recipient.eq.{user.id})"
+            ).order("created_at", descending=False).execute()
+            
+            with chat_placeholder.container():
+                for msg in messages.data:
+                    try:
+                        # Dissipation de l'état fantôme vers le texte clair
+                        # On utilise ta fonction decrypt_text
+                        raw_text = decrypt_text(msg.get("text", ""))
+                        
+                        side = "right" if msg["sender"] == user.id else "left"
+                        color = "#dcf8c6" if msg["sender"] == user.id else "#f1f0f0"
+                        align = "flex-end" if msg["sender"] == user.id else "flex-start"
+                        
+                        st.markdown(
+                            f"""<div style="display: flex; flex-direction: column; align-items: {align}; margin-bottom: 10px;">
+                                <div style="background-color: {color}; padding: 10px; border-radius: 15px; max-width: 70%;">
+                                    {raw_text}
+                                </div>
+                            </div>""", unsafe_allow_html=True)
+                    except:
+                        st.warning("⚠️ Instabilité détectée sur un message (Δk/k)")
 
-        for msg in messages.data:
-            decrypted_text = decrypt_text(msg.get("text", ""))
-            if msg["sender"] == user.id:
-                st.markdown(
-                    f"<div style='text-align: right; background-color: #dcf8c6; padding: 8px; border-radius: 10px; margin:5px;'>"
-                    f"<b>Vous</b> : {decrypted_text}</div>",
-                    unsafe_allow_html=True
-                )
-            else:
-                st.markdown(
-                    f"<div style='text-align: left; background-color: #f1f0f0; padding: 8px; border-radius: 10px; margin:5px;'>"
-                    f"<b>{contact_dict[selected_contact]}</b> : {decrypted_text}</div>",
-                    unsafe_allow_html=True
-                )
+        # Affichage initial
+        refresh_tunnel()
 
-        with st.form("new_message"):
-            msg_text = st.text_area("Votre message")
-            if st.form_submit_button("Envoyer (chiffré)"):
-                if msg_text.strip():
-                    encrypted_b64 = encrypt_text(msg_text)
-                    supabase.table("messages").insert({
-                        "sender": user.id,
-                        "recipient": selected_contact,
-                        "text": encrypted_b64,
-                        "created_at": datetime.now().isoformat()
-                    }).execute()
-                    st.success("Message envoyé (chiffré)")
-                    st.rerun()
-                else:
-                    st.warning("Le message ne peut pas être vide.")
+        # --- 4. ENVOI INSTANTANÉ ---
+        with st.form("projection", clear_on_submit=True):
+            msg_text = st.text_input("Message...")
+            submit = st.form_submit_button("Projeter (Envoyer)")
+            
+            if submit and msg_text.strip():
+                encrypted_b64 = encrypt_text(msg_text)
+                supabase.table("messages").insert({
+                    "sender": user.id,
+                    "recipient": selected_contact,
+                    "text": encrypted_b64,
+                    "created_at": datetime.now().isoformat()
+                }).execute()
+                # On force un rafraîchissement immédiat de l'UI
+                st.rerun()
+
+        # --- 5. L'AUTO-STABILISATEUR (Poll intermittent) ---
+        # Pour une vraie expérience WhatsApp, on demande à Streamlit de 
+        # vérifier la base toutes les 5 secondes sans que l'utilisateur ne clique.
+        time.sleep(5)
+        st.rerun()
 
 def marketplace_page():
     st.header("🏪 Marketplace")

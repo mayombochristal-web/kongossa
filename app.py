@@ -449,52 +449,208 @@ def feed_page():
             st.divider()
 
 def profile_page():
-    st.header("👤 Mon Profil")
-    with st.expander("Changer ma photo de profil", expanded=False):
-        uploaded_file = st.file_uploader("Choisir une image", type=["png", "jpg", "jpeg"])
-        if uploaded_file:
-            # Limite de taille (5 Mo)
-            if uploaded_file.size > 5 * 1024 * 1024:
-                st.error("Image trop volumineuse (max 5 Mo).")
-                st.stop()
+    apply_custom_design()
+    
+    # Récupération du profil utilisateur
+    try:
+        profile_data = supabase.table("profiles").select("*").eq("id", user.id).single().execute()
+        profile = profile_data.data
+    except Exception as e:
+        st.error("Impossible de charger votre profil.")
+        return
+
+    # --- HEADER PROFIL AVEC BADGES ---
+    col_pic, col_info = st.columns([1, 3])
+    with col_pic:
+        pic = profile.get("profile_pic")
+        if pic:
+            st.image(pic, width=120)
+        else:
+            st.image("https://via.placeholder.com/120", width=120)
+    with col_info:
+        st.title(f"@{profile['username']}")
+        st.caption(f"📍 {profile.get('location', 'Localisation non définie')}")
+        st.write(f"*{profile.get('bio', 'Aucune bio rédigée.')}*")
+        
+        # Calcul des badges
+        badges = []
+        if profile.get("is_verified"):
+            badges.append("✅ Vérifié")
+        tunnels_created = supabase.table("tunnels").select("*", count="exact").eq("creator_id", user.id).execute().count
+        if tunnels_created >= 5:
+            badges.append("🔑 Maître des Tunnels")
+        sales = supabase.table("marketplace_listings").select("*", count="exact").eq("user_id", user.id).gt("sales_count", 0).execute().count
+        if sales >= 3:
+            badges.append("💰 Marchand Émérite")
+        if badges:
+            st.markdown(" ".join([f"`{b}`" for b in badges]))
+
+    st.divider()
+
+    # --- ONGLETS DU PROFIL ---
+    tab_stats, tab_activity, tab_tunnels, tab_edit, tab_vault = st.tabs([
+        "📊 Statistiques", "📋 Activité", "🚇 Mes Tunnels", "⚙️ Modifier", "🔐 Coffre TTU"
+    ])
+
+    with tab_stats:
+        # Statistiques sociales
+        post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute().count
+        followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute().count
+        following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute().count
+        col1, col2, col3 = st.columns(3)
+        col1.metric("📝 Posts", post_count)
+        col2.metric("👥 Abonnés", followers)
+        col3.metric("👤 Abonnements", following)
+
+        # Statistiques économiques
+        wallet = supabase.table("wallets").select("*").eq("user_id", user.id).single().execute()
+        if wallet.data:
+            st.subheader("💰 Portefeuille KC")
+            col_w1, col_w2 = st.columns(2)
+            col_w1.metric("Solde", f"{wallet.data['kongo_balance']:,.0f}")
+            col_w2.metric("Total miné", f"{wallet.data['total_mined']:,.0f}")
+            # Transactions récentes
             try:
-                ext = uploaded_file.name.split(".")[-1]
-                file_name = f"avatars/{user.id}/{uuid.uuid4()}.{ext}"
-                supabase.storage.from_("avatars").upload(
-                    path=file_name,
-                    file=uploaded_file.getvalue(),
-                    file_options={"content-type": f"image/{ext}"}
-                )
-                public_url = supabase.storage.from_("avatars").get_public_url(file_name)
-                supabase.table("profiles").update({"profile_pic": public_url}).eq("id", user.id).execute()
-                st.success("Photo de profil mise à jour")
-                st.cache_data.clear()
+                transactions = supabase.table("transactions").select("*").eq("user_id", user.id).order("created_at", desc=True).limit(5).execute()
+                if transactions.data:
+                    st.subheader("Dernières transactions")
+                    for t in transactions.data:
+                        st.caption(f"{t['created_at'][:10]} : {t['type']} de {t['amount']} KC")
+            except:
+                pass
+
+        # Statistiques TTU
+        st.subheader("🚇 Activité TTU-MC³")
+        msg_count = supabase.table("messages").select("*", count="exact").eq("sender", user.id).execute().count
+        tunnels_member = supabase.table("tunnel_members").select("*", count="exact").eq("user_id", user.id).execute().count
+        col_t1, col_t2, col_t3 = st.columns(3)
+        col_t1.metric("Messages envoyés", msg_count)
+        col_t2.metric("Tunnels rejoints", tunnels_member)
+        col_t3.metric("Tunnels créés", tunnels_created)
+
+    with tab_activity:
+        st.subheader("📋 Activité récente")
+        # Derniers messages
+        last_msgs = supabase.table("messages") \
+            .select("text, created_at, tunnel_id, tunnels(name)") \
+            .eq("sender", user.id) \
+            .order("created_at", desc=True) \
+            .limit(5) \
+            .execute()
+        if last_msgs.data:
+            st.write("**Derniers messages**")
+            for m in last_msgs.data:
+                tunnel_name = m['tunnels']['name'] if m.get('tunnels') else "Inconnu"
+                st.caption(f"🗣️ Dans {tunnel_name} – {m['created_at'][:16]}")
+        else:
+            st.caption("Aucun message récent.")
+
+        # Dernières annonces marketplace
+        last_listings = supabase.table("marketplace_listings") \
+            .select("title, created_at") \
+            .eq("user_id", user.id) \
+            .order("created_at", desc=True) \
+            .limit(3) \
+            .execute()
+        if last_listings.data:
+            st.write("**Dernières annonces**")
+            for l in last_listings.data:
+                st.caption(f"🛒 {l['title']} – {l['created_at'][:10]}")
+
+        # Derniers achats (si table purchases existe)
+        try:
+            purchases = supabase.table("purchases") \
+                .select("listing_id, marketplace_listings(title), created_at") \
+                .eq("buyer_id", user.id) \
+                .order("created_at", desc=True) \
+                .limit(3) \
+                .execute()
+            if purchases.data:
+                st.write("**Derniers achats**")
+                for p in purchases.data:
+                    st.caption(f"🛍️ {p['marketplace_listings']['title']} – {p['created_at'][:10]}")
+        except:
+            pass
+
+    with tab_tunnels:
+        st.subheader("🚇 Mes Tunnels")
+        tunnels = supabase.table("tunnel_members") \
+            .select("tunnel_id, tunnels(name, k_hash, created_at)") \
+            .eq("user_id", user.id) \
+            .execute()
+        if tunnels.data:
+            for t in tunnels.data:
+                tunnel = t['tunnels']
+                with st.container(border=True):
+                    col_tn1, col_tn2 = st.columns([3,1])
+                    col_tn1.markdown(f"**{tunnel['name']}**")
+                    col_tn2.caption(f"Créé le {tunnel['created_at'][:10]}")
+                    members = supabase.table("tunnel_members").select("*", count="exact").eq("tunnel_id", t['tunnel_id']).execute().count
+                    st.caption(f"👥 {members} membre(s) | 🔑 {tunnel['k_hash'][:8]}...")
+        else:
+            st.info("Vous n'êtes membre d'aucun tunnel.")
+
+    with tab_edit:
+        st.subheader("⚙️ Modifier mon profil")
+        # Changement d'avatar
+        with st.expander("📸 Changer ma photo", expanded=False):
+            up_file = st.file_uploader("Upload (Max 5Mo)", type=["png", "jpg", "jpeg"])
+            if up_file:
+                if up_file.size > 5 * 1024 * 1024:
+                    st.error("Trop lourd !")
+                else:
+                    try:
+                        ext = up_file.name.split(".")[-1]
+                        fn = f"avatars/{user.id}/{uuid.uuid4()}.{ext}"
+                        supabase.storage.from_("avatars").upload(file=up_file.getvalue(), path=fn)
+                        url = supabase.storage.from_("avatars").get_public_url(fn)
+                        supabase.table("profiles").update({"profile_pic": url}).eq("id", user.id).execute()
+                        st.success("Photo mise à jour !")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+        # Formulaire de profil
+        with st.form("edit_form"):
+            new_username = st.text_input("Nom d'utilisateur", value=profile["username"])
+            new_bio = st.text_area("Bio", value=profile.get("bio", ""), max_chars=150)
+            new_loc = st.text_input("Localisation", value=profile.get("location", ""))
+            if st.form_submit_button("💾 Sauvegarder les modifications"):
+                supabase.table("profiles").update({
+                    "username": new_username,
+                    "bio": new_bio,
+                    "location": new_loc
+                }).eq("id", user.id).execute()
+                st.toast("Profil mis à jour ✅")
+                time.sleep(1)
                 st.rerun()
-            except Exception as e:
-                st.error(f"Erreur lors de l'upload : {e}")
 
-    with st.form("edit_profile"):
-        username = st.text_input("Nom d'utilisateur", value=profile["username"])
-        bio = st.text_area("Bio", value=profile.get("bio", ""))
-        location = st.text_input("Localisation", value=profile.get("location", ""))
-        if st.form_submit_button("Mettre à jour"):
-            supabase.table("profiles").update({
-                "username": username,
-                "bio": bio,
-                "location": location
-            }).eq("id", user.id).execute()
-            st.success("Profil mis à jour")
-            st.cache_data.clear()
-            st.rerun()
-
-    st.subheader("Mes statistiques")
-    post_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute()
-    st.metric("Posts publiés", post_count.count)
-    followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute()
-    following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute()
-    col1, col2 = st.columns(2)
-    col1.metric("Abonnés", followers.count)
-    col2.metric("Abonnements", following.count)
+    with tab_vault:
+        st.subheader("🔐 Coffre TTU-MC³")
+        st.markdown("""
+        Le coffre stocke l'historique de vos clés de courbure K utilisées pour les tunnels.
+        Chaque clé est hachée et stockée de manière sécurisée.
+        """)
+        # Récupération des clés utilisées (table user_keys)
+        try:
+            keys = supabase.table("user_keys").select("*").eq("user_id", user.id).order("created_at", desc=True).limit(10).execute()
+            if keys.data:
+                for k in keys.data:
+                    col_k1, col_k2, col_k3 = st.columns([2,1,1])
+                    col_k1.caption(f"🔑 {k['key_hash'][:16]}...")
+                    col_k2.caption(f"Utilisée le {k['created_at'][:10]}")
+                    col_k3.caption(f"Tunnel: {k.get('tunnel_name', 'N/A')}")
+            else:
+                st.info("Aucune clé enregistrée. Utilisez un tunnel pour générer une clé.")
+        except:
+            st.info("Module de coffre en cours d'initialisation.")
+        
+        # Affichage de la clé courante
+        if "current_k" in st.session_state:
+            st.success("Clé K active dans cette session")
+            st.code(hashlib.sha256(st.session_state.current_k.encode()).hexdigest(), language="text")
+        else:
+            st.warning("Aucune clé active. Vos tunnels sont actuellement invisibles.")
 
 def messages_page():
     st.header("🌌 Tunnel Souverain TTU-MC³")

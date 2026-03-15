@@ -8,6 +8,8 @@ import hashlib
 import hmac
 import base64
 from cryptography.fernet import Fernet
+from PIL import Image 
+import io             
 
 def get_fernet_from_key(secret: str) -> Fernet:
     """Dérive une clé Fernet à partir du secret partagé."""

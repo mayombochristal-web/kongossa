@@ -11,10 +11,11 @@ from cryptography.fernet import Fernet
 from PIL import Image 
 import io             
 
+# =====================================================
+# FONCTIONS DE CHIFFREMENT (version unique)
+# =====================================================
 def get_fernet_from_key(secret: str) -> Fernet:
     """Dérive une clé Fernet à partir du secret partagé."""
-    # Fernet nécessite une clé de 32 bytes en base64
-    # On utilise SHA256 pour obtenir 32 bytes, puis base64
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
     return Fernet(key)
 
@@ -27,6 +28,7 @@ def decrypt_text(ciphertext: str) -> str:
     """Déchiffre un texte avec la clé stockée en session."""
     fernet = get_fernet_from_key(st.session_state.current_k)
     return fernet.decrypt(ciphertext.encode()).decode()
+
 # =====================================================
 # CONFIGURATION
 # =====================================================
@@ -59,15 +61,15 @@ def get_fernet():
 fernet = get_fernet()
 
 # =====================================================
-# FONCTIONS DE CHIFFREMENT / DÉCHIFFREMENT
+# FONCTIONS DE CHIFFREMENT / DÉCHIFFREMENT (global)
 # =====================================================
-def encrypt_text(plain_text: str) -> str:
+def encrypt_text_global(plain_text: str) -> str:
     if not plain_text:
         return ""
     encrypted = fernet.encrypt(plain_text.encode())
     return base64.b64encode(encrypted).decode()
 
-def decrypt_text(encrypted_b64: str) -> str:
+def decrypt_text_global(encrypted_b64: str) -> str:
     if not encrypted_b64:
         return ""
     try:
@@ -1013,9 +1015,10 @@ def profile_page():
                         role = "Créateur" if tunnel.get('creator_id') == user.id else "Membre"
                         col_t1.markdown(f"**{tunnel['name']}** - `{role}`")
                         col_t2.caption(f"Créé le {tunnel['created_at'][:10]}")
-
-if tunnel.get('creator_id') == user.id:
-                 copy_tunnel_id_button(t['tunnel_id'], tunnel['name'])
+                        
+                        # Bouton de copie pour le créateur
+                        if tunnel.get('creator_id') == user.id:
+                            copy_tunnel_id_button(t['tunnel_id'], tunnel['name'])
                         
                         # Statistiques du tunnel
                         try:

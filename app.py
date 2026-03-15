@@ -335,17 +335,15 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 def feed_page():
     apply_custom_design()
     
-    # CSS spécifique pour un feed engageant
+    # CSS spécifique pour un feed engageant (inchangé)
     st.markdown("""
         <style>
-        /* Effet carte TikTok : média immersif */
         .stImage > img {
             border-radius: 15px;
             object-fit: cover;
             width: 100%;
             max-height: 500px;
         }
-        /* Style des boutons d'interaction */
         .stButton button {
             background-color: #242526 !important;
             border: 1px solid #3a3b3c !important;
@@ -356,19 +354,16 @@ def feed_page():
             background-color: #3a3b3c !important;
             border-color: #ff9d00 !important;
         }
-        /* Avatar arrondi */
         .stImage > img[alt*="avatar"] {
             border-radius: 50%;
             object-fit: cover;
         }
-        /* Titre du feed */
         h1 {
             background: linear-gradient(45deg, #ff9d00, #ff4b4b);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             font-size: 2.5rem !important;
         }
-        /* Réduire la taille de l'expander des interactions */
         div[data-testid="stExpander"] details {
             background: transparent;
             border: none;
@@ -379,42 +374,51 @@ def feed_page():
     st.header("🌐 Fil Souverain")
 
     # =============================================
-    # FONCTIONS UTILITAIRES INTERNES
+    # FONCTIONS UTILITAIRES INTERNES (AMÉLIORÉES)
     # =============================================
     def get_public_url(bucket: str, path: str) -> str:
-        """Génère une URL publique pour un fichier dans Supabase Storage."""
+        """Tente d'obtenir une URL publique ; si échec, utilise une URL signée."""
         try:
-            return supabase.storage.from_(bucket).get_public_url(path)
+            # Essayer d'abord l'URL publique
+            url = supabase.storage.from_(bucket).get_public_url(path)
+            return url
         except:
-            return None
+            try:
+                # Fallback : URL signée valable 1 heure
+                signed = supabase.storage.from_(bucket).create_signed_url(path, 3600)
+                return signed['signedURL']
+            except Exception as e:
+                st.error(f"Impossible de générer l'URL pour le média : {e}")
+                return None
 
     def upload_file(bucket: str, file, user_id: str) -> str:
-        """Upload un fichier et retourne le chemin stocké."""
-        ext = file.name.split(".")[-1]
+        """Upload avec gestion robuste du content-type (basée sur l'extension)."""
+        ext = file.name.split(".")[-1].lower()
+        # Mapping des extensions aux types MIME
+        mime_map = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'mp4': 'video/mp4',
+            'mp3': 'audio/mpeg'
+        }
+        content_type = mime_map.get(ext, 'application/octet-stream')
+        
         path = f"{user_id}/{uuid.uuid4()}.{ext}"
-        # Définir le content-type en fonction du type détecté
-        content_type = file.type
-        # Forcer le content-type pour certains types si nécessaire
-        if content_type == "application/octet-stream":
-            if ext.lower() in ["mp4"]:
-                content_type = "video/mp4"
-            elif ext.lower() in ["mp3"]:
-                content_type = "audio/mpeg"
-            elif ext.lower() in ["jpg", "jpeg"]:
-                content_type = "image/jpeg"
-            elif ext.lower() in ["png"]:
-                content_type = "image/png"
-        supabase.storage.from_(bucket).upload(
-            file=file.getvalue(),
-            path=path,
-            file_options={"content-type": content_type}
-        )
-        return path
+        try:
+            supabase.storage.from_(bucket).upload(
+                file=file.getvalue(),
+                path=path,
+                file_options={"content-type": content_type}
+            )
+            return path
+        except Exception as e:
+            st.error(f"Erreur upload : {e}")
+            return None
 
     def process_emoji_payment(post_id: str, receiver_id: str, emoji: str, amount: int):
-        """Traite un don KC à un post."""
+        """Traite un don KC à un post (inchangé)."""
         try:
-            # Vérification rapide du solde (optionnelle)
             supabase.rpc('process_tip', {
                 'p_post_id': post_id,
                 'p_sender_id': user.id,
@@ -422,7 +426,6 @@ def feed_page():
                 'p_amount': amount,
                 'p_emoji': emoji
             }).execute()
-            # Notification au receveur
             supabase.table("notifications").insert({
                 "user_id": receiver_id,
                 "title": f"🎁 Don reçu !",
@@ -435,7 +438,7 @@ def feed_page():
             st.error(f"Erreur de transaction : {e}")
 
     def delete_post(post_id: str):
-        """Supprime un post et son média associé."""
+        """Supprime un post et son média associé (inchangé)."""
         try:
             post = supabase.table("posts").select("media_path").eq("id", post_id).single().execute()
             if post.data and post.data.get("media_path"):
@@ -446,7 +449,7 @@ def feed_page():
             st.error(f"Erreur lors de la suppression : {e}")
 
     # =============================================
-    # 1. ZONE DE CRÉATION DE POST
+    # 1. ZONE DE CRÉATION DE POST (inchangée)
     # =============================================
     with st.expander("🎥 Partager un moment", expanded=False):
         with st.form("new_post_form", clear_on_submit=True):
@@ -462,13 +465,13 @@ def feed_page():
                         media_path = None
                         media_type = None
                         if media_file:
-                            # Vérification supplémentaire du type MIME
-                            allowed_types = ["image/jpeg", "image/png", "video/mp4", "audio/mpeg"]
-                            if media_file.type not in allowed_types:
-                                st.error("Type de fichier non supporté. Utilisez JPG, PNG, MP4 ou MP3.")
+                            # Vérification via l'extension plutôt que le type MIME déclaré
+                            ext = media_file.name.split(".")[-1].lower()
+                            if ext not in ['jpg', 'jpeg', 'png', 'mp4', 'mp3']:
+                                st.error("Extension de fichier non supportée. Utilisez JPG, PNG, MP4 ou MP3.")
                                 st.stop()
                             media_path = upload_file("media", media_file, user.id)
-                            media_type = media_file.type
+                            media_type = f"image/{ext}" if ext in ['jpg','jpeg','png'] else f"video/{ext}" if ext=='mp4' else f"audio/{ext}"
                         
                         supabase.table("posts").insert({
                             "user_id": user.id,
@@ -487,7 +490,7 @@ def feed_page():
                     st.warning("Écrivez quelque chose ou ajoutez un média.")
 
     # =============================================
-    # 2. RÉCUPÉRATION DU FLUX
+    # 2. RÉCUPÉRATION DU FLUX (inchangée)
     # =============================================
     try:
         posts = supabase.table("posts").select(
@@ -502,7 +505,7 @@ def feed_page():
         return
 
     # =============================================
-    # 3. AFFICHAGE DES POSTS
+    # 3. AFFICHAGE DES POSTS (AMÉLIORÉ)
     # =============================================
     for post in posts.data:
         with st.container(border=True):
@@ -523,16 +526,30 @@ def feed_page():
                 media_url = get_public_url("media", post["media_path"])
                 if media_url:
                     m_type = post.get("media_type", "")
+                    # Déterminer le type à afficher
                     if "image" in m_type:
                         st.image(media_url, use_container_width=True)
                     elif "video" in m_type:
                         st.video(media_url)
                     elif "audio" in m_type:
                         st.audio(media_url)
+                    else:
+                        # Fallback sur l'extension
+                        ext = post["media_path"].split(".")[-1].lower()
+                        if ext in ['jpg', 'jpeg', 'png']:
+                            st.image(media_url, use_container_width=True)
+                        elif ext == 'mp4':
+                            st.video(media_url)
+                        elif ext == 'mp3':
+                            st.audio(media_url)
+                        else:
+                            st.caption("📁 Fichier non affichable")
+                else:
+                    st.caption("📁 Média temporairement indisponible")
 
             st.divider()
 
-            # --- INTERACTIONS DANS UN EXPANDER (gain de place) ---
+            # --- INTERACTIONS DANS UN EXPANDER ---
             with st.expander("💬 Réagir / Offrir des KC", expanded=False):
                 cols = st.columns(5)
                 with cols[0]:
@@ -541,7 +558,6 @@ def feed_page():
                 with cols[1]:
                     if st.button("💬", key=f"comment_{post['id']}"):
                         st.info("Commentaires à venir")
-                # Dons KC
                 with cols[2]:
                     if st.button("🔥 10", key=f"tip10_{post['id']}", help="Offrir 10 KC"):
                         process_emoji_payment(post['id'], post['user_id'], "🔥", 10)

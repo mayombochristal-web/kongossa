@@ -368,13 +368,18 @@ def feed_page():
             -webkit-text-fill-color: transparent;
             font-size: 2.5rem !important;
         }
+        /* Réduire la taille de l'expander des interactions */
+        div[data-testid="stExpander"] details {
+            background: transparent;
+            border: none;
+        }
         </style>
     """, unsafe_allow_html=True)
 
     st.header("🌐 Fil Souverain")
 
     # =============================================
-    # FONCTIONS UTILITAIRES INTERNES (pour éviter les erreurs)
+    # FONCTIONS UTILITAIRES INTERNES
     # =============================================
     def get_public_url(bucket: str, path: str) -> str:
         """Génère une URL publique pour un fichier dans Supabase Storage."""
@@ -387,13 +392,29 @@ def feed_page():
         """Upload un fichier et retourne le chemin stocké."""
         ext = file.name.split(".")[-1]
         path = f"{user_id}/{uuid.uuid4()}.{ext}"
-        supabase.storage.from_(bucket).upload(file=file.getvalue(), path=path)
+        # Définir le content-type en fonction du type détecté
+        content_type = file.type
+        # Forcer le content-type pour certains types si nécessaire
+        if content_type == "application/octet-stream":
+            if ext.lower() in ["mp4"]:
+                content_type = "video/mp4"
+            elif ext.lower() in ["mp3"]:
+                content_type = "audio/mpeg"
+            elif ext.lower() in ["jpg", "jpeg"]:
+                content_type = "image/jpeg"
+            elif ext.lower() in ["png"]:
+                content_type = "image/png"
+        supabase.storage.from_(bucket).upload(
+            file=file.getvalue(),
+            path=path,
+            file_options={"content-type": content_type}
+        )
         return path
 
     def process_emoji_payment(post_id: str, receiver_id: str, emoji: str, amount: int):
         """Traite un don KC à un post."""
         try:
-            # Appel à une fonction RPC (à créer dans Supabase) pour la transaction
+            # Vérification rapide du solde (optionnelle)
             supabase.rpc('process_tip', {
                 'p_post_id': post_id,
                 'p_sender_id': user.id,
@@ -416,18 +437,16 @@ def feed_page():
     def delete_post(post_id: str):
         """Supprime un post et son média associé."""
         try:
-            # Récupérer le chemin du média pour le supprimer du storage
             post = supabase.table("posts").select("media_path").eq("id", post_id).single().execute()
             if post.data and post.data.get("media_path"):
                 supabase.storage.from_("media").remove([post.data["media_path"]])
-            # Supprimer le post
             supabase.table("posts").delete().eq("id", post_id).execute()
             st.toast("Post supprimé.")
         except Exception as e:
             st.error(f"Erreur lors de la suppression : {e}")
 
     # =============================================
-    # 1. ZONE DE CRÉATION DE POST (EXPANDER DISCRET)
+    # 1. ZONE DE CRÉATION DE POST
     # =============================================
     with st.expander("🎥 Partager un moment", expanded=False):
         with st.form("new_post_form", clear_on_submit=True):
@@ -443,6 +462,11 @@ def feed_page():
                         media_path = None
                         media_type = None
                         if media_file:
+                            # Vérification supplémentaire du type MIME
+                            allowed_types = ["image/jpeg", "image/png", "video/mp4", "audio/mpeg"]
+                            if media_file.type not in allowed_types:
+                                st.error("Type de fichier non supporté. Utilisez JPG, PNG, MP4 ou MP3.")
+                                st.stop()
                             media_path = upload_file("media", media_file, user.id)
                             media_type = media_file.type
                         
@@ -463,7 +487,7 @@ def feed_page():
                     st.warning("Écrivez quelque chose ou ajoutez un média.")
 
     # =============================================
-    # 2. RÉCUPÉRATION DU FLUX (avec jointure profiles)
+    # 2. RÉCUPÉRATION DU FLUX
     # =============================================
     try:
         posts = supabase.table("posts").select(
@@ -482,7 +506,7 @@ def feed_page():
     # =============================================
     for post in posts.data:
         with st.container(border=True):
-            # --- HEADER (Facebook style) ---
+            # --- HEADER ---
             col_avatar, col_header = st.columns([1, 6])
             with col_avatar:
                 avatar = post["profiles"].get("profile_pic")
@@ -508,24 +532,25 @@ def feed_page():
 
             st.divider()
 
-            # --- BARRE D'INTERACTIONS (Hybride social + économique) ---
-            cols = st.columns(5)
-            with cols[0]:
-                if st.button("👍", key=f"like_{post['id']}"):
-                    st.toast("➕ Like ajouté (fonction sociale à implémenter)")
-            with cols[1]:
-                if st.button("💬", key=f"comment_{post['id']}"):
-                    st.info("Fonction commentaires à venir")
-            # Dons KC (TikTok style)
-            with cols[2]:
-                if st.button("🔥 10", key=f"tip10_{post['id']}", help="Offrir 10 KC"):
-                    process_emoji_payment(post['id'], post['user_id'], "🔥", 10)
-            with cols[3]:
-                if st.button("💎 50", key=f"tip50_{post['id']}", help="Offrir 50 KC"):
-                    process_emoji_payment(post['id'], post['user_id'], "💎", 50)
-            with cols[4]:
-                if st.button("👑 100", key=f"tip100_{post['id']}", help="Offrir 100 KC"):
-                    process_emoji_payment(post['id'], post['user_id'], "👑", 100)
+            # --- INTERACTIONS DANS UN EXPANDER (gain de place) ---
+            with st.expander("💬 Réagir / Offrir des KC", expanded=False):
+                cols = st.columns(5)
+                with cols[0]:
+                    if st.button("👍", key=f"like_{post['id']}"):
+                        st.toast("➕ Like (à implémenter)")
+                with cols[1]:
+                    if st.button("💬", key=f"comment_{post['id']}"):
+                        st.info("Commentaires à venir")
+                # Dons KC
+                with cols[2]:
+                    if st.button("🔥 10", key=f"tip10_{post['id']}", help="Offrir 10 KC"):
+                        process_emoji_payment(post['id'], post['user_id'], "🔥", 10)
+                with cols[3]:
+                    if st.button("💎 50", key=f"tip50_{post['id']}", help="Offrir 50 KC"):
+                        process_emoji_payment(post['id'], post['user_id'], "💎", 50)
+                with cols[4]:
+                    if st.button("👑 100", key=f"tip100_{post['id']}", help="Offrir 100 KC"):
+                        process_emoji_payment(post['id'], post['user_id'], "👑", 100)
 
             # --- OPTION DE SUPPRESSION POUR L'AUTEUR ---
             if post["user_id"] == user.id:

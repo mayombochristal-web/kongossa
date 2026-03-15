@@ -537,33 +537,39 @@ def messages_page():
         selected_t_id = st.selectbox("Choisir un canal", options=list(t_options.keys()), format_func=lambda x: t_options[x])
 
         if selected_t_id:
-            # Container de discussion
-            chat_box = st.container(height=400)
-            
-            # Récupération des messages
-            messages = supabase.table("messages").select("*, profiles(username)").eq("tunnel_id", selected_t_id).order("created_at").execute()
+        chat_box = st.container(height=450)
+        
+        # 1. Récupération des messages brute (Plus stable)
+        res = supabase.table("messages").select("*").eq("tunnel_id", selected_t_id).order("created_at").execute()
+        
+        # 2. Récupération des profils pour afficher les noms
+        profiles_res = supabase.table("profiles").select("id, username").execute()
+        user_map = {p['id']: p['username'] for p in profiles_res.data}
 
-            for m in messages.data:
+        with chat_box:
+            for m in res.data:
                 is_me = m["sender"] == user.id
-                with chat_box.chat_message("user" if is_me else "assistant"):
-                    # Déchiffrement souverain
-                    try:
-                        clean_text = decrypt_text(m["text"]) # Utilise ta clé Fernet globale
-                        st.markdown(f"**{m['profiles']['username']}**: {clean_text}")
-                    except:
-                        st.caption("🔒 Message crypté (Courbure incompatible)")
+                author = user_map.get(m["sender"], "Inconnu")
+                
+                # Dissipation de l'état fantôme vers le texte clair
+                try:
+                    text = decrypt_text(m["text"])
+                    with st.chat_message("user" if is_me else "assistant"):
+                        st.write(f"**{author}**: {text}")
+                except:
+                    st.caption("🔒 Message crypté (Courbure K requise)")
 
-            # ENVOI (Le texte disparaît après validation)
-            if prompt := st.chat_input("Écrire dans le tunnel..."):
-                enc_text = encrypt_text(prompt)
-                supabase.table("messages").insert({
-                    "sender": user.id,
-                    "tunnel_id": selected_t_id,
-                    "text": enc_text
-                }).execute()
-                st.rerun() # Rafraîchissement immédiat : vide le champ et affiche le message
+        # 3. Envoi (Le champ se vide tout seul)
+        if prompt := st.chat_input("Écrire dans le tunnel..."):
+            enc = encrypt_text(prompt)
+            supabase.table("messages").insert({
+                "sender": user.id,
+                "tunnel_id": selected_t_id,
+                "text": enc
+            }).execute()
+            st.rerun()
 
-    # AUTO-SYNC (Temps réel simulé)
+    # Rafraîchissement auto toutes les 5 secondes
     time.sleep(5)
     st.rerun()
 

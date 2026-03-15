@@ -498,23 +498,17 @@ def messages_page():
         st.divider()
         # 🔘 Toggle pour activer/désactiver le mode temps réel
         real_time = st.toggle("📡 Mode Temps Réel", value=True,
-                              help="Actualisation automatique des messages")
-        # ⚡ Bouton d'actualisation manuelle (même en mode hors ligne)
-        if st.button("🔄 Actualiser maintenant"):
-            st.rerun(scope="fragment")  # Ne rerun que le fragment chat
+                              help="Actualisation automatique des messages toutes les 5s")
 
     # --- 2. RECHERCHE OU CRÉATION DU TUNNEL PAR K_HASH ---
     try:
-        # Vérifier s'il existe déjà un tunnel avec ce k_hash
         existing = supabase.table("tunnels").select("id").eq("k_hash", tunnel_id_hash).execute()
         if existing.data:
             tunnel_id = existing.data[0]['id']
-            # Vérifier si l'utilisateur est déjà membre
             member_check = supabase.table("tunnel_members").select("id").eq("tunnel_id", tunnel_id).eq("user_id", user.id).execute()
             if not member_check.data:
                 supabase.table("tunnel_members").insert({"user_id": user.id, "tunnel_id": tunnel_id}).execute()
         else:
-            # Créer un nouveau tunnel
             new_tunnel = supabase.table("tunnels").insert({
                 "name": f"Tunnel {shared_k[:4]}", 
                 "creator_id": user.id, 
@@ -530,13 +524,13 @@ def messages_page():
         st.error(f"Erreur lors de la synchronisation du tunnel : {e}")
         return
 
-    # --- 3. DONNÉES MISES EN CACHE (profils, tunnels) ---
-    @st.cache_data(ttl=300)  # 5 minutes
+    # --- 3. DONNÉES MISES EN CACHE ---
+    @st.cache_data(ttl=300)
     def get_profiles():
         resp = supabase.table("profiles").select("id, username").execute()
         return {p['id']: p['username'] for p in resp.data}
 
-    @st.cache_data(ttl=60)   # 1 minute
+    @st.cache_data(ttl=60)
     def get_my_tunnels(user_id):
         resp = supabase.table("tunnel_members").select("tunnel_id, tunnels(name)").eq("user_id", user_id).execute()
         return {t['tunnel_id']: t['tunnels']['name'] for t in resp.data}
@@ -548,7 +542,7 @@ def messages_page():
         st.warning("Aucun tunnel actif détecté.")
         return
 
-    # --- 4. SÉLECTION DU CANAL (pré-sélectionne celui lié à K) ---
+    # --- 4. SÉLECTION DU CANAL ---
     default_index = list(t_options.keys()).index(tunnel_id) if tunnel_id in t_options else 0
     selected_t_id = st.selectbox(
         "Sélectionner le canal",
@@ -558,16 +552,15 @@ def messages_page():
         key="tunnel_selector"
     )
 
-    # --- 5. ZONE DE CHAT (FRAGMENT) ---
-    # Ce bloc sera re-exécuté indépendamment du reste de la page
+    # --- 5. FRAGMENT DE CHAT AUTO-RAFRÎCHISSANT ---
     @st.fragment
-    def chat_fragment(tunnel_id, user_map, shared_k):
-        # Initialiser en session le timestamp du dernier message affiché pour ce tunnel
+    def chat_fragment(tunnel_id, user_map, shared_k, real_time):
+        # Initialiser le timestamp du dernier message
         last_ts_key = f"last_ts_{tunnel_id}"
         if last_ts_key not in st.session_state:
             st.session_state[last_ts_key] = "1970-01-01T00:00:00"
 
-        # Requête : uniquement les messages plus récents que le dernier timestamp connu
+        # Récupérer les messages plus récents que le dernier timestamp
         new_msgs = supabase.table("messages") \
             .select("*") \
             .eq("tunnel_id", tunnel_id) \
@@ -575,73 +568,54 @@ def messages_page():
             .order("created_at") \
             .execute()
 
-        # S'il y a de nouveaux messages, on met à jour le timestamp
         if new_msgs.data:
-            latest_ts = new_msgs.data[-1]['created_at']
-            st.session_state[last_ts_key] = latest_ts
+            st.session_state[last_ts_key] = new_msgs.data[-1]['created_at']
 
-        # Récupérer tous les messages (on pourrait aussi stocker l'historique en session)
-        # Pour simplifier, on recharge tout, mais cela n'arrive que quand il y a de nouveaux messages
+        # Récupérer tous les messages pour affichage complet
         all_msgs = supabase.table("messages") \
             .select("*") \
             .eq("tunnel_id", tunnel_id) \
             .order("created_at") \
             .execute()
 
-        # Conteneur de chat avec hauteur fixe
+        # Conteneur de chat
         chat_container = st.container(height=450)
         with chat_container:
             for m in all_msgs.data:
                 is_me = m["sender"] == user.id
                 author = user_map.get(m["sender"], "Inconnu")
                 try:
-                    # Déchiffrement avec la clé K
-                    clear_text = decrypt_text(m["text"], shared_k)  # adapte selon ta fonction
+                    clear_text = decrypt_text(m["text"], shared_k)  # adapte
                     with st.chat_message("user" if is_me else "assistant"):
                         st.markdown(f"**{author}** : {clear_text}")
                 except Exception:
-                    st.caption("🔒 Message crypté (Courbure K requise)")
+                    st.caption("🔒 Message crypté")
 
-        # Zone de saisie (doit être dans le fragment pour mise à jour immédiate)
+        # Zone de saisie
         if prompt := st.chat_input("Projeter un message..."):
-            # Chiffrement avec la clé K
-            encrypted_val = encrypt_text(prompt, shared_k)  # adapte selon ta fonction
+            encrypted_val = encrypt_text(prompt, shared_k)
             supabase.table("messages").insert({
                 "sender": user.id,
                 "tunnel_id": tunnel_id,
                 "text": encrypted_val,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }).execute()
-            # Mettre à jour le timestamp pour que le message apparaisse immédiatement
             st.session_state[last_ts_key] = datetime.now(timezone.utc).isoformat()
-            # Re-exécuter uniquement ce fragment
+            st.rerun(scope="fragment")  # OK : dans le fragment
+
+        # --- BOUTON MANUEL D'ACTUALISATION ---
+        col1, col2 = st.columns([1, 5])
+        with col1:
+            if st.button("🔄", help="Actualiser manuellement"):
+                st.rerun(scope="fragment")
+
+        # --- POLLING AUTOMATIQUE (temps réel) ---
+        if real_time:
+            time.sleep(5)
             st.rerun(scope="fragment")
 
     # Appel du fragment
-    chat_fragment(selected_t_id, user_map, shared_k)
-
-    # --- 6. GESTION INTELLIGENTE DU TEMPS RÉEL ---
-    if real_time:
-        # Vérifier s'il y a des messages plus récents que le dernier affiché
-        last_ts = st.session_state.get(f"last_ts_{selected_t_id}", "1970-01-01T00:00:00")
-        latest = supabase.table("messages") \
-            .select("created_at") \
-            .eq("tunnel_id", selected_t_id) \
-            .gt("created_at", last_ts) \
-            .order("created_at", desc=True) \
-            .limit(1) \
-            .execute()
-
-        if latest.data:
-            # Nouveau message détecté → rafraîchir le fragment immédiatement
-            st.rerun(scope="fragment")
-        else:
-            # Pas de nouveau message, attendre 5 secondes avant de revérifier
-            time.sleep(5)
-            st.rerun(scope="fragment")
-    else:
-        # Mode temps réel désactivé : on ne fait rien, l'utilisateur utilisera le bouton manuel
-        st.caption("⏸ Mode temps réel désactivé. Utilisez le bouton dans la sidebar pour actualiser.")
+    chat_fragment(selected_t_id, user_map, shared_k, real_time)
 
 def marketplace_page():
     st.header("🏪 Marketplace")

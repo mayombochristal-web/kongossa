@@ -585,7 +585,8 @@ def messages_page():
                 is_me = m["sender"] == user.id
                 author = user_map.get(m["sender"], "Inconnu")
                 try:
-                    clear_text = decrypt_text(m["text"], shared_k)  # adapte selon ta fonction
+                    # Appel sans second argument (la clé est gérée ailleurs)
+                    clear_text = decrypt_text(m["text"])
                     with st.chat_message("user" if is_me else "assistant"):
                         st.markdown(f"**{author}** : {clear_text}")
                 except Exception:
@@ -593,7 +594,8 @@ def messages_page():
 
         # Zone de saisie
         if prompt := st.chat_input("Projeter un message..."):
-            encrypted_val = encrypt_text(prompt, shared_k)  # adapte selon ta fonction
+            # Appel sans second argument
+            encrypted_val = encrypt_text(prompt)
             supabase.table("messages").insert({
                 "sender": user.id,
                 "tunnel_id": tunnel_id,

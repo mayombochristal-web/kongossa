@@ -586,7 +586,13 @@ def profile_page():
                     col_tn1.markdown(f"**{tunnel['name']}**")
                     col_tn2.caption(f"Créé le {tunnel['created_at'][:10]}")
                     members = supabase.table("tunnel_members").select("*", count="exact").eq("tunnel_id", t['tunnel_id']).execute().count
-                    st.caption(f"👥 {members} membre(s) | 🔑 {tunnel['k_hash'][:8]}...")
+                    # 🔑 Gestion de l'affichage du hash (peut être None)
+                    key_hash = tunnel.get('k_hash')
+                    if key_hash:
+                        key_display = key_hash[:8]
+                    else:
+                        key_display = "pas de clé"
+                    st.caption(f"👥 {members} membre(s) | 🔑 {key_display}")
         else:
             st.info("Vous n'êtes membre d'aucun tunnel.")
 

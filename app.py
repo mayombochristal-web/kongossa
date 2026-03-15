@@ -1013,6 +1013,9 @@ def profile_page():
                         role = "Créateur" if tunnel.get('creator_id') == user.id else "Membre"
                         col_t1.markdown(f"**{tunnel['name']}** - `{role}`")
                         col_t2.caption(f"Créé le {tunnel['created_at'][:10]}")
+
+if tunnel.get('creator_id') == user.id:
+                 copy_tunnel_id_button(t['tunnel_id'], tunnel['name'])
                         
                         # Statistiques du tunnel
                         try:
@@ -1154,6 +1157,125 @@ def profile_page():
             > Le coffre ne stocke que les hashs, jamais les clés elles-mêmes.
             """)
 
+# =====================================================
+# INTERFACE POUR REJOINDRE UN TUNNEL
+# =====================================================
+def join_tunnel_interface():
+    """Interface pour rejoindre un tunnel avec une clé."""
+    
+    st.subheader("🔑 Rejoindre un Tunnel")
+    
+    with st.container(border=True):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            tunnel_id_input = st.text_input("ID du Tunnel", placeholder="Copiez l'identifiant ici...", key="join_tunnel_id")
+        with col2:
+            # Bouton pour coller depuis le presse-papiers (aide)
+            if st.button("📋 Coller", help="Coller l'ID depuis le presse-papiers"):
+                # Note: Streamlit ne peut pas accéder directement au presse-papiers,
+                # mais on peut utiliser une astuce avec st.markdown
+                st.info("Utilisez Ctrl+V (Cmd+V sur Mac) pour coller")
+        
+        key_input = st.text_input("Clé d'accès", type="password", placeholder="Entrez la clé secrète...", key="join_tunnel_key")
+        
+        if st.button("🔓 Débloquer l'accès", use_container_width=True, type="primary"):
+            if tunnel_id_input and key_input:
+                with st.spinner("Vérification en cours..."):
+                    try:
+                        # 1. Vérifier si le tunnel existe
+                        tunnel = supabase.table("tunnels").select("name, creator_id").eq("id", tunnel_id_input).maybe_single().execute()
+                        
+                        if tunnel.data:
+                            # 2. Vérifier que l'utilisateur n'est pas déjà membre
+                            member_check = supabase.table("tunnel_members").select("id").eq("tunnel_id", tunnel_id_input).eq("user_id", user.id).execute()
+                            
+                            if not member_check.data:
+                                # 3. Ajouter l'utilisateur comme membre
+                                supabase.table("tunnel_members").insert({
+                                    "user_id": user.id,
+                                    "tunnel_id": tunnel_id_input,
+                                    "joined_at": datetime.now().isoformat()
+                                }).execute()
+                            
+                            # 4. Enregistrer la clé pour cet utilisateur
+                            hashed_key = hashlib.sha256(key_input.encode()).hexdigest()
+                            
+                            # Appeler la fonction RPC existante ou insérer directement
+                            try:
+                                supabase.rpc('record_user_key', {
+                                    'p_user_id': user.id,
+                                    'p_key_hash': hashed_key,
+                                    'p_tunnel_id': tunnel_id_input,
+                                    'p_tunnel_name': tunnel.data['name']
+                                }).execute()
+                            except Exception as rpc_error:
+                                # Fallback: insertion directe si la RPC n'existe pas
+                                supabase.table("user_keys").insert({
+                                    "user_id": user.id,
+                                    "key_hash": hashed_key,
+                                    "tunnel_id": tunnel_id_input,
+                                    "tunnel_name": tunnel.data['name'],
+                                    "created_at": datetime.now().isoformat()
+                                }).execute()
+                            
+                            # 5. Stocker la clé en session pour cette session
+                            st.session_state[f"tunnel_key_{tunnel_id_input}"] = key_input
+                            
+                            st.success(f"✅ Accès validé pour le tunnel : {tunnel.data['name']}")
+                            st.balloons()
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("❌ Identifiant de tunnel introuvable.")
+                    except Exception as e:
+                        st.error(f"Erreur d'accès : {str(e)}")
+            else:
+                st.warning("⚠️ Veuillez remplir tous les champs.")
+
+# =====================================================
+# INTERFACE POUR COPIER L'ID D'UN TUNNEL
+# =====================================================
+def copy_tunnel_id_button(tunnel_id, tunnel_name):
+    """Affiche un bouton pour copier l'ID du tunnel."""
+    
+    # Générer un ID unique pour le textarea caché
+    textarea_id = f"hidden_text_{tunnel_id}"
+    
+    # Créer un textarea caché avec l'ID
+    st.markdown(f"""
+    <textarea id="{textarea_id}" style="position: absolute; left: -9999px;">{tunnel_id}</textarea>
+    
+    <script>
+    function copyToClipboard_{tunnel_id.replace('-', '_')}() {{
+        var copyText = document.getElementById("{textarea_id}");
+        copyText.select();
+        copyText.setSelectionRange(0, 99999);
+        document.execCommand("copy");
+        
+        // Afficher une notification
+        var tooltip = document.getElementById("tooltip_{tunnel_id.replace('-', '_')}");
+        tooltip.style.display = "inline";
+        setTimeout(function() {{ tooltip.style.display = "none"; }}, 2000);
+    }}
+    </script>
+    
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <button onclick="copyToClipboard_{tunnel_id.replace('-', '_')}()" 
+                style="background: #21262d; border: 1px solid #ff9d00; border-radius: 20px; 
+                       color: white; padding: 5px 15px; cursor: pointer; font-size: 14px;">
+            📋 Copier l'ID
+        </button>
+        <span id="tooltip_{tunnel_id.replace('-', '_')}" style="display: none; color: #ff9d00; font-size: 12px;">
+            ✓ Copié !
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Alternative Streamlit si le JavaScript pose problème
+    with st.expander("📋 Voir l'ID à copier", expanded=False):
+        st.code(tunnel_id, language="text")
+        st.caption("Sélectionnez et copiez (Ctrl+C) cet identifiant")
+
 def messages_page():
     st.header("🌌 Tunnel Souverain TTU-MC³")
 
@@ -1166,16 +1288,23 @@ def messages_page():
             st.info("Tunnel en état fantôme. Entrez votre clé K.")
             st.stop()
             
-        # Stockage de la clé en session pour les fonctions de chiffrement
+        # Stockage de la clé en session
         st.session_state.current_k = shared_k
             
         tunnel_id_hash = hashlib.sha256(shared_k.encode()).hexdigest()
         st.success(f"Phase Cohérente : {tunnel_id_hash[:8]}")
 
         st.divider()
+        
+        # 🔘 AJOUTER L'INTERFACE POUR REJOINDRE UN TUNNEL ICI
+        with st.expander("🔑 Rejoindre un Tunnel", expanded=False):
+            join_tunnel_interface()
+        
+        st.divider()
+        
         # 🔘 Toggle pour activer/désactiver le mode temps réel
         real_time = st.toggle("📡 Mode Temps Réel", value=True,
-                              help="Actualisation automatique (l'intervalle s'adapte à l'activité)")
+                              help="Actualisation automatique (intervalle adaptatif)")
 
     # --- 2. RECHERCHE OU CRÉATION DU TUNNEL PAR K_HASH ---
     try:

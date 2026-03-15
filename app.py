@@ -654,17 +654,20 @@ def messages_page():
     chat_fragment(selected_t_id, user_map, shared_k, real_time)
 
 def marketplace_page():
+    # Application du design personnalisé (doit être défini avant)
     apply_custom_design()
     st.header("🏪 Marketplace Souverain")
 
-    # --- SECTION NOTIFICATIONS (déjà existante, conservée) ---
-    show_notifications()
+    # --- SECTION NOTIFICATIONS ---
+    show_notifications()  # suppose que cette fonction est définie et utilise supabase/user
 
     # --- INITIALISATION DES ÉTATS DE SESSION POUR FILTRES ---
     if "search_query" not in st.session_state:
         st.session_state.search_query = ""
     if "selected_category" not in st.session_state:
         st.session_state.selected_category = "Toutes"
+    if "edit_mode" not in st.session_state:
+        st.session_state.edit_mode = {}  # pour gérer l'édition des annonces
 
     # --- SIDEBAR : FILTRES ET ACTIONS RAPIDES ---
     with st.sidebar:
@@ -673,45 +676,43 @@ def marketplace_page():
                                key="search_input", placeholder="Nom, description...")
         st.session_state.search_query = search
 
-        # Récupération des catégories depuis la base (si table categories existe)
+        # Catégories (soit depuis la base, soit en dur)
         try:
             categories_resp = supabase.table("categories").select("name").execute()
             cat_list = ["Toutes"] + [c["name"] for c in categories_resp.data]
         except:
             cat_list = ["Toutes", "Art", "Technologie", "Services", "Autre"]
-        category = st.selectbox("Catégorie", cat_list, index=cat_list.index(st.session_state.selected_category) if st.session_state.selected_category in cat_list else 0)
+        category = st.selectbox("Catégorie", cat_list, 
+                                index=cat_list.index(st.session_state.selected_category) if st.session_state.selected_category in cat_list else 0)
         st.session_state.selected_category = category
 
         st.divider()
         st.subheader("💰 Mon Portefeuille")
-        # Récupération du solde KC de l'utilisateur (à adapter selon ta table users/profiles)
+        # Solde KC (à adapter selon ta table)
         try:
             profile = supabase.table("profiles").select("kc_balance").eq("id", user.id).execute()
             balance = profile.data[0]["kc_balance"] if profile.data else 0
             st.metric("Solde KC", f"{balance:,.0f}")
-        except:
+        except Exception:
             st.metric("Solde KC", "N/A")
 
         if st.button("📥 Recharger", use_container_width=True):
-            st.info("Fonctionnalité à venir")  # ou lien vers un système de recharge
+            st.info("Fonctionnalité à venir")
 
-    # --- DASHBOARD VENDEUR AMÉLIORÉ ---
+    # --- DASHBOARD VENDEUR ---
     with st.expander("📊 Mon Dashboard Vendeur", expanded=False):
         my_listings = supabase.table("marketplace_listings").select("*").eq("user_id", user.id).execute()
         if my_listings.data:
             df = pd.DataFrame(my_listings.data)
-            # Calcul des ventes et revenus
             total_sales = df['sales_count'].sum() if 'sales_count' in df.columns else 0
             total_revenue = (df['sales_count'] * df['price_kc']).sum() if 'sales_count' in df.columns else 0
             avg_price = df['price_kc'].mean()
-
             col_d1, col_d2, col_d3, col_d4 = st.columns(4)
             col_d1.metric("📦 Ventes", f"{total_sales}")
             col_d2.metric("💰 Revenus", f"{total_revenue:,.0f} KC")
             col_d3.metric("📈 Prix moyen", f"{avg_price:,.0f} KC")
             col_d4.metric("🏷️ Articles", f"{len(df)}")
 
-            # Graphique des ventes par article
             if total_sales > 0:
                 st.subheader("Performances des ventes")
                 df_sorted = df.sort_values('sales_count', ascending=False).head(10)
@@ -721,7 +722,7 @@ def marketplace_page():
         else:
             st.info("Publiez votre premier article pour voir vos stats.")
 
-    # --- PUBLIER UNE ANNONCE AMÉLIORÉ ---
+    # --- PUBLIER UNE ANNONCE ---
     with st.expander("➕ Publier une annonce"):
         with st.form("new_listing_form", clear_on_submit=True):
             col_f1, col_f2 = st.columns(2)
@@ -733,27 +734,24 @@ def marketplace_page():
                 condition = st.selectbox("État", ["Neuf", "Comme neuf", "Bon état", "État correct"])
                 stock = st.number_input("Quantité", min_value=1, value=1, step=1)
                 img = st.file_uploader("Image (optionnelle)", type=["jpg", "jpeg", "png"])
-
             description = st.text_area("Description *", height=100)
 
             if st.form_submit_button("🚀 Lancer la vente", use_container_width=True):
                 if not title or not description or price <= 0:
                     st.error("Veuillez remplir tous les champs obligatoires (*).")
                 else:
-                    # Upload de l'image si fournie
                     media_url = None
                     if img is not None:
-                        # Générer un nom unique
+                        # Upload vers Supabase Storage
                         file_ext = img.name.split(".")[-1]
                         file_name = f"{uuid.uuid4()}.{file_ext}"
-                        # Upload vers Supabase Storage (bucket 'marketplace')
                         try:
-                            supabase.storage.from_("marketplace").upload(file_name, img.getvalue(), {"content-type": img.type})
+                            supabase.storage.from_("marketplace").upload(file_name, img.getvalue(), 
+                                                                          {"content-type": img.type})
                             media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
                         except Exception as e:
                             st.warning(f"L'image n'a pas pu être uploadée : {e}")
 
-                    # Insertion dans la base
                     try:
                         supabase.table("marketplace_listings").insert({
                             "user_id": user.id,
@@ -775,7 +773,7 @@ def marketplace_page():
 
     st.divider()
 
-    # --- CONSTRUCTION DE LA REQUÊTE DES ANNONCES AVEC FILTRES ---
+    # --- REQUÊTE DES ANNONCES AVEC FILTRES ---
     query = supabase.table("marketplace_listings").select("*, profiles(username)").eq("is_active", True)
     if st.session_state.search_query:
         query = query.ilike("title", f"%{st.session_state.search_query}%")
@@ -789,9 +787,6 @@ def marketplace_page():
 
     # --- AFFICHAGE DES ANNONCES EN GRILLE ---
     st.subheader(f"📌 Annonces disponibles ({len(listings.data)})")
-
-    # Définir le nombre de colonnes en fonction de la largeur (responsive)
-    # Utilisation de st.columns avec un nombre fixe (3) et laisser le CSS gérer le responsive
     cols = st.columns(3)
     for idx, item in enumerate(listings.data):
         with cols[idx % 3]:
@@ -813,17 +808,17 @@ def marketplace_page():
                 with col_info2:
                     st.caption(f"📦 Stock: {item.get('stock', 1)}")
 
-                # Description tronquée
+                # Description extensible
                 with st.expander("Description"):
                     st.write(item['description'])
 
-                # Boutons d'action selon propriétaire
+                # Actions selon propriétaire
                 if item["user_id"] == user.id:
-                    # Actions pour le vendeur
+                    # Actions vendeur
                     col_a1, col_a2 = st.columns(2)
                     with col_a1:
                         if st.button("✏️ Modifier", key=f"edit_{item['id']}", use_container_width=True):
-                            st.session_state[f"edit_{item['id']}"] = True
+                            st.session_state.edit_mode[item['id']] = True
                     with col_a2:
                         if st.button("🚫 Retirer", key=f"del_{item['id']}", type="secondary", use_container_width=True):
                             supabase.table("marketplace_listings").update({"is_active": False}).eq("id", item["id"]).execute()
@@ -831,11 +826,10 @@ def marketplace_page():
                             time.sleep(1)
                             st.rerun()
                 else:
-                    # Actions pour l'acheteur
+                    # Actions acheteur
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
-                        # Bouton favoris
-                        # Vérifier si déjà en favori
+                        # Favoris
                         fav = supabase.table("user_favorites").select("id").eq("user_id", user.id).eq("listing_id", item["id"]).execute()
                         if fav.data:
                             if st.button("★", key=f"fav_{item['id']}", help="Retirer des favoris", use_container_width=True):
@@ -849,7 +843,7 @@ def marketplace_page():
                         # Achat
                         if st.button("🛒 Acheter", key=f"buy_{item['id']}", type="primary", use_container_width=True):
                             try:
-                                # Appel de la fonction RPC sécurisée (doit exister)
+                                # Appel de la fonction RPC sécurisée (à créer dans Supabase)
                                 supabase.rpc('process_marketplace_purchase', {
                                     'p_listing_id': item['id'],
                                     'p_buyer_id': user.id,

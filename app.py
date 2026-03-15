@@ -654,116 +654,222 @@ def messages_page():
     chat_fragment(selected_t_id, user_map, shared_k, real_time)
 
 def marketplace_page():
-    st.header("🏪 Marketplace")
-    with st.expander("➕ Ajouter une annonce"):
-        with st.form("new_listing"):
-            title = st.text_input("Titre")
-            description = st.text_area("Description")
-            price = st.number_input("Prix (KC)", min_value=0.0, step=0.1)
-            media = st.file_uploader("Image du produit", type=["png", "jpg", "jpeg"])
-            submitted = st.form_submit_button("Publier l'annonce")
-            if submitted and title:
-                if media and media.size > 5 * 1024 * 1024:
-                    st.error("Image trop volumineuse (max 5 Mo).")
-                    st.stop()
-                try:
-                    media_url = None
-                    if media:
-                        file_name = f"marketplace/{user.id}/{uuid.uuid4()}.jpg"
-                        supabase.storage.from_("marketplace").upload(
-                            path=file_name,
-                            file=media.getvalue(),
-                            file_options={"content-type": media.type}
-                        )
-                        media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
-                    supabase.table("marketplace_listings").insert({
-                        "user_id": user.id,
-                        "title": title,
-                        "description": description,
-                        "price_kc": price,
-                        "media_url": media_url,
-                        "media_type": "image",
-                        "created_at": datetime.now().isoformat(),
-                        "is_active": True,
-                        "status": "Disponible",
-                        "sales_count": 0
-                    }).execute()
-                    st.success("Annonce ajoutée et disponible !")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur lors de la publication : {e}")
+    apply_custom_design()
+    st.header("🏪 Marketplace Souverain")
 
-    st.subheader("Annonces récentes")
-    listings = supabase.table("marketplace_listings").select(
-        "*, profiles!inner(username)"
-    ).eq("is_active", True).order("created_at", desc=True).execute()
+    # --- SECTION NOTIFICATIONS (déjà existante, conservée) ---
+    show_notifications()
+
+    # --- INITIALISATION DES ÉTATS DE SESSION POUR FILTRES ---
+    if "search_query" not in st.session_state:
+        st.session_state.search_query = ""
+    if "selected_category" not in st.session_state:
+        st.session_state.selected_category = "Toutes"
+
+    # --- SIDEBAR : FILTRES ET ACTIONS RAPIDES ---
+    with st.sidebar:
+        st.subheader("🔍 Filtres")
+        search = st.text_input("Rechercher un article", value=st.session_state.search_query,
+                               key="search_input", placeholder="Nom, description...")
+        st.session_state.search_query = search
+
+        # Récupération des catégories depuis la base (si table categories existe)
+        try:
+            categories_resp = supabase.table("categories").select("name").execute()
+            cat_list = ["Toutes"] + [c["name"] for c in categories_resp.data]
+        except:
+            cat_list = ["Toutes", "Art", "Technologie", "Services", "Autre"]
+        category = st.selectbox("Catégorie", cat_list, index=cat_list.index(st.session_state.selected_category) if st.session_state.selected_category in cat_list else 0)
+        st.session_state.selected_category = category
+
+        st.divider()
+        st.subheader("💰 Mon Portefeuille")
+        # Récupération du solde KC de l'utilisateur (à adapter selon ta table users/profiles)
+        try:
+            profile = supabase.table("profiles").select("kc_balance").eq("id", user.id).execute()
+            balance = profile.data[0]["kc_balance"] if profile.data else 0
+            st.metric("Solde KC", f"{balance:,.0f}")
+        except:
+            st.metric("Solde KC", "N/A")
+
+        if st.button("📥 Recharger", use_container_width=True):
+            st.info("Fonctionnalité à venir")  # ou lien vers un système de recharge
+
+    # --- DASHBOARD VENDEUR AMÉLIORÉ ---
+    with st.expander("📊 Mon Dashboard Vendeur", expanded=False):
+        my_listings = supabase.table("marketplace_listings").select("*").eq("user_id", user.id).execute()
+        if my_listings.data:
+            df = pd.DataFrame(my_listings.data)
+            # Calcul des ventes et revenus
+            total_sales = df['sales_count'].sum() if 'sales_count' in df.columns else 0
+            total_revenue = (df['sales_count'] * df['price_kc']).sum() if 'sales_count' in df.columns else 0
+            avg_price = df['price_kc'].mean()
+
+            col_d1, col_d2, col_d3, col_d4 = st.columns(4)
+            col_d1.metric("📦 Ventes", f"{total_sales}")
+            col_d2.metric("💰 Revenus", f"{total_revenue:,.0f} KC")
+            col_d3.metric("📈 Prix moyen", f"{avg_price:,.0f} KC")
+            col_d4.metric("🏷️ Articles", f"{len(df)}")
+
+            # Graphique des ventes par article
+            if total_sales > 0:
+                st.subheader("Performances des ventes")
+                df_sorted = df.sort_values('sales_count', ascending=False).head(10)
+                st.bar_chart(df_sorted.set_index('title')['sales_count'])
+            else:
+                st.info("Aucune vente enregistrée pour le moment.")
+        else:
+            st.info("Publiez votre premier article pour voir vos stats.")
+
+    # --- PUBLIER UNE ANNONCE AMÉLIORÉ ---
+    with st.expander("➕ Publier une annonce"):
+        with st.form("new_listing_form", clear_on_submit=True):
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                title = st.text_input("Nom de l'article *", max_chars=100)
+                price = st.number_input("Prix (KC) *", min_value=0.0, step=10.0)
+                category = st.selectbox("Catégorie", cat_list[1:] if len(cat_list)>1 else ["Général"])
+            with col_f2:
+                condition = st.selectbox("État", ["Neuf", "Comme neuf", "Bon état", "État correct"])
+                stock = st.number_input("Quantité", min_value=1, value=1, step=1)
+                img = st.file_uploader("Image (optionnelle)", type=["jpg", "jpeg", "png"])
+
+            description = st.text_area("Description *", height=100)
+
+            if st.form_submit_button("🚀 Lancer la vente", use_container_width=True):
+                if not title or not description or price <= 0:
+                    st.error("Veuillez remplir tous les champs obligatoires (*).")
+                else:
+                    # Upload de l'image si fournie
+                    media_url = None
+                    if img is not None:
+                        # Générer un nom unique
+                        file_ext = img.name.split(".")[-1]
+                        file_name = f"{uuid.uuid4()}.{file_ext}"
+                        # Upload vers Supabase Storage (bucket 'marketplace')
+                        try:
+                            supabase.storage.from_("marketplace").upload(file_name, img.getvalue(), {"content-type": img.type})
+                            media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
+                        except Exception as e:
+                            st.warning(f"L'image n'a pas pu être uploadée : {e}")
+
+                    # Insertion dans la base
+                    try:
+                        supabase.table("marketplace_listings").insert({
+                            "user_id": user.id,
+                            "title": title,
+                            "description": description,
+                            "price_kc": price,
+                            "category": category,
+                            "condition": condition,
+                            "stock": stock,
+                            "media_url": media_url,
+                            "is_active": True,
+                            "created_at": datetime.utcnow().isoformat()
+                        }).execute()
+                        st.success("✅ Annonce publiée avec succès !")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur lors de la publication : {e}")
+
+    st.divider()
+
+    # --- CONSTRUCTION DE LA REQUÊTE DES ANNONCES AVEC FILTRES ---
+    query = supabase.table("marketplace_listings").select("*, profiles(username)").eq("is_active", True)
+    if st.session_state.search_query:
+        query = query.ilike("title", f"%{st.session_state.search_query}%")
+    if st.session_state.selected_category != "Toutes":
+        query = query.eq("category", st.session_state.selected_category)
+    listings = query.order("created_at", desc=True).execute()
+
     if not listings.data:
-        st.info("Aucune annonce pour le moment.")
+        st.info("😕 Aucune annonce ne correspond à vos critères.")
         return
 
+    # --- AFFICHAGE DES ANNONCES EN GRILLE ---
+    st.subheader(f"📌 Annonces disponibles ({len(listings.data)})")
+
+    # Définir le nombre de colonnes en fonction de la largeur (responsive)
+    # Utilisation de st.columns avec un nombre fixe (3) et laisser le CSS gérer le responsive
     cols = st.columns(3)
-    for i, listing in enumerate(listings.data):
-        with cols[i % 3]:
-            status = listing.get("status", "Disponible")
-            color = "green" if status == "Disponible" else "red"
-            st.markdown(f"### {listing['title']}")
-            st.markdown(f":{color}[**[{status}]**]")
-            if listing.get("media_url"):
-                st.image(listing["media_url"], use_container_width=True)
-            st.write(listing["description"][:100] + "..." if len(listing["description"]) > 100 else listing["description"])
-            st.write(f"💰 **{listing['price_kc']:,.0f} KC**")
-            st.caption(f"Vendeur : {listing['profiles']['username']}")
-
-            if listing["user_id"] != user.id:
-                if status == "Disponible":
-                    if st.button(f"🛒 Acheter ({listing['price_kc']} KC)", key=f"buy_{listing['id']}"):
-                        # Vérifier que le statut est toujours Disponible (pour éviter les achats concurrents)
-                        current_listing = supabase.table("marketplace_listings").select("status").eq("id", listing["id"]).single().execute()
-                        if current_listing.data and current_listing.data["status"] != "Disponible":
-                            st.error("Cette annonce n'est plus disponible.")
-                            st.rerun()
-
-                        wallet_res = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
-                        if wallet_res.data:
-                            buyer_wallet = wallet_res.data[0]
-                            if buyer_wallet["kongo_balance"] >= listing["price_kc"]:
-                                try:
-                                    # Débiter l'acheteur
-                                    new_buyer_balance = buyer_wallet["kongo_balance"] - listing["price_kc"]
-                                    supabase.table("wallets").update({"kongo_balance": new_buyer_balance}).eq("user_id", user.id).execute()
-                                    # Créditer le vendeur
-                                    vendeur_wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", listing["user_id"]).execute()
-                                    if vendeur_wallet_res.data:
-                                        new_seller_balance = vendeur_wallet_res.data[0]["kongo_balance"] + listing["price_kc"]
-                                        supabase.table("wallets").update({"kongo_balance": new_seller_balance}).eq("user_id", listing["user_id"]).execute()
-                                    # Mettre à jour l'annonce
-                                    new_sales_count = listing.get("sales_count", 0) + 1
-                                    supabase.table("marketplace_listings").update({
-                                        "status": "Vendu",
-                                        "sales_count": new_sales_count
-                                    }).eq("id", listing["id"]).execute()
-                                    # Message automatique
-                                    msg_text = f"🚨 ACHAT : Je suis intéressé par '{listing['title']}'. Le paiement de {listing['price_kc']} KC a été transféré sur votre compte."
-                                    encrypted_msg = encrypt_text(msg_text)
-                                    supabase.table("messages").insert({
-                                        "sender": user.id,
-                                        "recipient": listing["user_id"],
-                                        "text": encrypted_msg,
-                                        "created_at": datetime.now().isoformat()
-                                    }).execute()
-                                    st.success("✅ Transaction terminée ! Le vendeur a été notifié.")
-                                    time.sleep(1.5)
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erreur transactionnelle : {e}")
-                            else:
-                                st.error("Solde KC insuffisant.")
-                        else:
-                            st.error("Portefeuille introuvable.")
+    for idx, item in enumerate(listings.data):
+        with cols[idx % 3]:
+            with st.container(border=True):
+                # Image
+                if item.get("media_url"):
+                    st.image(item["media_url"], use_container_width=True)
                 else:
-                    st.button("❌ Déjà Vendu", disabled=True, key=f"sold_{listing['id']}")
-            else:
-                st.info(f"📊 {listing.get('sales_count', 0)} client(s) sur cette annonce")
+                    st.image("https://placehold.co/300x200/2d3a4a/white?text=No+Image", use_container_width=True)
+
+                # Titre et prix
+                st.markdown(f"**{item['title']}**")
+                st.markdown(f"<h3 style='color:#ff9d00;'>{item['price_kc']:,.0f} KC</h3>", unsafe_allow_html=True)
+
+                # Métadonnées
+                col_info1, col_info2 = st.columns(2)
+                with col_info1:
+                    st.caption(f"👤 {item['profiles']['username']}")
+                with col_info2:
+                    st.caption(f"📦 Stock: {item.get('stock', 1)}")
+
+                # Description tronquée
+                with st.expander("Description"):
+                    st.write(item['description'])
+
+                # Boutons d'action selon propriétaire
+                if item["user_id"] == user.id:
+                    # Actions pour le vendeur
+                    col_a1, col_a2 = st.columns(2)
+                    with col_a1:
+                        if st.button("✏️ Modifier", key=f"edit_{item['id']}", use_container_width=True):
+                            st.session_state[f"edit_{item['id']}"] = True
+                    with col_a2:
+                        if st.button("🚫 Retirer", key=f"del_{item['id']}", type="secondary", use_container_width=True):
+                            supabase.table("marketplace_listings").update({"is_active": False}).eq("id", item["id"]).execute()
+                            st.toast("Annonce retirée.")
+                            time.sleep(1)
+                            st.rerun()
+                else:
+                    # Actions pour l'acheteur
+                    col_b1, col_b2 = st.columns(2)
+                    with col_b1:
+                        # Bouton favoris
+                        # Vérifier si déjà en favori
+                        fav = supabase.table("user_favorites").select("id").eq("user_id", user.id).eq("listing_id", item["id"]).execute()
+                        if fav.data:
+                            if st.button("★", key=f"fav_{item['id']}", help="Retirer des favoris", use_container_width=True):
+                                supabase.table("user_favorites").delete().eq("user_id", user.id).eq("listing_id", item["id"]).execute()
+                                st.rerun()
+                        else:
+                            if st.button("☆", key=f"fav_{item['id']}", help="Ajouter aux favoris", use_container_width=True):
+                                supabase.table("user_favorites").insert({"user_id": user.id, "listing_id": item["id"]}).execute()
+                                st.rerun()
+                    with col_b2:
+                        # Achat
+                        if st.button("🛒 Acheter", key=f"buy_{item['id']}", type="primary", use_container_width=True):
+                            try:
+                                # Appel de la fonction RPC sécurisée (doit exister)
+                                supabase.rpc('process_marketplace_purchase', {
+                                    'p_listing_id': item['id'],
+                                    'p_buyer_id': user.id,
+                                    'p_seller_id': item['user_id'],
+                                    'p_amount': float(item['price_kc'])
+                                }).execute()
+
+                                # Notification au vendeur
+                                supabase.table("notifications").insert({
+                                    "user_id": item['user_id'],
+                                    "title": "💰 Article Vendu !",
+                                    "message": f"Votre article '{item['title']}' a été acheté pour {item['price_kc']} KC."
+                                }).execute()
+
+                                st.balloons()
+                                st.success("Achat réussi !")
+                                time.sleep(2)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur lors de l'achat : {e}")
 
 def wallet_page():
     st.header("💰 Mon Wallet")

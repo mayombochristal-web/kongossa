@@ -508,13 +508,16 @@ def messages_page():
             st.info("Tunnel en état fantôme. Entrez votre clé K.")
             st.stop()
             
+        # Stockage de la clé en session pour les fonctions de chiffrement
+        st.session_state.current_k = shared_k
+            
         tunnel_id_hash = hashlib.sha256(shared_k.encode()).hexdigest()
         st.success(f"Phase Cohérente : {tunnel_id_hash[:8]}")
 
         st.divider()
         # 🔘 Toggle pour activer/désactiver le mode temps réel
         real_time = st.toggle("📡 Mode Temps Réel", value=True,
-                              help="Actualisation automatique des messages toutes les 5s")
+                              help="Actualisation automatique (l'intervalle s'adapte à l'activité)")
 
     # --- 2. RECHERCHE OU CRÉATION DU TUNNEL PAR K_HASH ---
     try:
@@ -601,7 +604,7 @@ def messages_page():
                 is_me = m["sender"] == user.id
                 author = user_map.get(m["sender"], "Inconnu")
                 try:
-                    clear_text = decrypt_text(m["text"])  # adapte selon ta fonction
+                    clear_text = decrypt_text(m["text"])  # utilise la clé en session
                     with st.chat_message("user" if is_me else "assistant"):
                         st.markdown(f"**{author}** : {clear_text}")
                 except Exception:
@@ -609,26 +612,43 @@ def messages_page():
 
         # Zone de saisie
         if prompt := st.chat_input("Projeter un message..."):
-            encrypted_val = encrypt_text(prompt)  # adapte selon ta fonction
+            encrypted_val = encrypt_text(prompt)
             supabase.table("messages").insert({
                 "sender": user.id,
                 "tunnel_id": tunnel_id,
                 "text": encrypted_val,
-                "created_at": datetime.utcnow().isoformat()  # ← correction ici
+                "created_at": datetime.utcnow().isoformat()
             }).execute()
-            st.session_state[last_ts_key] = datetime.utcnow().isoformat()  # ← correction ici
-            st.rerun()  # relance uniquement ce fragment
+            st.session_state[last_ts_key] = datetime.utcnow().isoformat()
+            st.rerun()  # relance le fragment immédiatement
 
         # --- BOUTON MANUEL D'ACTUALISATION ---
         col1, col2 = st.columns([1, 5])
         with col1:
             if st.button("🔄", help="Actualiser manuellement"):
-                st.rerun()  # relance uniquement ce fragment
+                st.rerun()
 
-        # --- POLLING AUTOMATIQUE (temps réel) ---
+        # --- POLLING AUTOMATIQUE ADAPTATIF (température du tunnel) ---
         if real_time:
-            time.sleep(5)
-            st.rerun()  # relance uniquement ce fragment
+            poll_key = f"poll_interval_{tunnel_id}"
+            if poll_key not in st.session_state:
+                st.session_state[poll_key] = 5  # intervalle initial (secondes)
+            
+            # Ajustement basé sur l'activité
+            if new_msgs.data:
+                # Nouveaux messages → on accélère
+                st.session_state[poll_key] = 5
+            else:
+                # Aucun nouveau message → on ralentit progressivement (max 120s)
+                st.session_state[poll_key] = min(st.session_state[poll_key] * 1.2, 120)
+            
+            # Affichage optionnel de l'intervalle
+            with col2:
+                st.caption(f"⚡ prochain rafraîchissement dans {st.session_state[poll_key]:.0f}s")
+            
+            # Pause puis rerun du fragment
+            time.sleep(st.session_state[poll_key])
+            st.rerun()
 
     # --- 6. APPEL DU FRAGMENT ---
     chat_fragment(selected_t_id, user_map, shared_k, real_time)

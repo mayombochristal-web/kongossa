@@ -335,9 +335,6 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # =====================================================
 # FONCTIONS UTILITAIRES POUR LE FEED
 # =====================================================
-from PIL import Image
-import io
-
 def upload_optimized_media(file):
     """Upload avec compression automatique des images."""
     try:

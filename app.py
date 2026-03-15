@@ -332,40 +332,113 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # =====================================================
 # PAGES
 # =====================================================
-# 1. Définir la fonction de suppression au début du script
-def delete_post_and_media(post_id, media_path):
+# =====================================================
+# FONCTIONS UTILITAIRES POUR LE FEED
+# =====================================================
+from PIL import Image
+import io
+
+def upload_optimized_media(file):
+    """Upload avec compression automatique des images."""
     try:
+        if file.type.startswith("image/"):
+            img = Image.open(file)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            
+            buffer = io.BytesIO()
+            quality = 85 if file.size < 1024*1024 else 70
+            img.save(buffer, format="JPEG", quality=quality, optimize=True)
+            file_data = buffer.getvalue()
+            content_type = "image/jpeg"
+            file_name = f"{uuid.uuid4()}.jpg"
+        else:
+            file_data = file.getvalue()
+            content_type = file.type
+            ext = file.name.split(".")[-1]
+            file_name = f"{uuid.uuid4()}.{ext}"
+
+        path = f"{user.id}/{file_name}"
+        supabase.storage.from_("media").upload(
+            path=path,
+            file=file_data,
+            file_options={"content-type": content_type}
+        )
+        return path, content_type
+    except Exception as e:
+        st.error(f"Erreur upload : {e}")
+        return None, None
+
+def get_signed_media_url(path: str) -> str:
+    """Génère une URL signée valable 1 heure."""
+    if not path:
+        return None
+    try:
+        res = supabase.storage.from_("media").create_signed_url(path, 3600)
+        return res['signedURL']
+    except Exception as e:
+        return None
+
+def delete_post_and_media(post_id, media_path):
+    """Supprime proprement le média du storage et le post de la DB."""
+    try:
+        # 1. Supprimer le fichier physique (API Storage)
         if media_path:
             supabase.storage.from_("media").remove([media_path])
+            
+        # 2. Supprimer l'entrée en base de données
         supabase.table("posts").delete().eq("id", post_id).execute()
+        
         st.toast("🚀 Publication retirée avec succès", icon="🗑️")
         return True
     except Exception as e:
         st.error(f"Erreur lors de la suppression : {e}")
         return False
 
-# 2. L'appeler à l'intérieur de votre boucle de posts
-def feed_page():
-    # ... (votre code d'affichage des posts) ...
-    
-    for post in posts.data:
-        with st.container(border=True):
-            # ... (affichage du texte et des médias) ...
-            
-            # BOUTON DE SUPPRESSION (UX sécurisée)
-            if post["user_id"] == user.id: # Vérification du propriétaire
-                if st.button("🗑️ Supprimer", key=f"del_{post['id']}"):
-                    # Appel de la fonction définie plus haut
-                    if delete_post_and_media(post['id'], post.get('media_path')):
-                        st.rerun() # Rafraîchir pour faire disparaître le post
+def toggle_like(post_id, user_id):
+    """Toggle like : ajoute ou retire selon l'état actuel."""
+    check = supabase.table("likes").select("*").eq("post_id", post_id).eq("user_id", user_id).execute()
+    if check.data:
+        supabase.table("likes").delete().eq("post_id", post_id).eq("user_id", user_id).execute()
+        return "retiré"
+    else:
+        supabase.table("likes").insert({"post_id": post_id, "user_id": user_id}).execute()
+        return "ajouté"
 
+def add_comment(post_id, user_id, text):
+    """Ajoute un commentaire."""
+    if text.strip():
+        supabase.table("comments").insert({
+            "post_id": post_id,
+            "user_id": user_id,
+            "text": text
+        }).execute()
+        return True
+    return False
+
+def process_tip(post_id, sender_id, receiver_id, amount, emoji):
+    """Traite un don KC via RPC."""
+    try:
+        supabase.rpc('process_tip', {
+            'p_post_id': post_id,
+            'p_sender_id': sender_id,
+            'p_receiver_id': receiver_id,
+            'p_amount': amount,
+            'p_emoji': emoji
+        }).execute()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+# =====================================================
+# PAGE FEED
+# =====================================================
 def feed_page():
     st.header("🌐 Fil d'actualité")
 
     # --- CSS PREMIUM COMPACT ---
     st.markdown("""
         <style>
-        /* Carte glassmorphique plus compacte */
         div[data-testid="stVerticalBlockBorderControl"] {
             background: rgba(22, 27, 34, 0.7) !important;
             backdrop-filter: blur(10px);
@@ -379,13 +452,11 @@ def feed_page():
             transform: scale(1.01);
             border-color: #ff9d00 !important;
         }
-        /* Médias */
         .stImage > img, .stVideo > video {
             border-radius: 12px;
             max-height: 500px;
             object-fit: cover;
         }
-        /* Avatar */
         .stImage > img[alt*="avatar"] {
             border-radius: 50%;
             width: 40px !important;
@@ -393,7 +464,6 @@ def feed_page():
             object-fit: cover;
             border: 2px solid #ff9d00;
         }
-        /* Boutons compacts */
         .stButton button {
             background: #21262d !important;
             border: none !important;
@@ -405,16 +475,6 @@ def feed_page():
             padding: 0 10px !important;
             margin: 0 !important;
         }
-        /* Conteneur de boutons sans marge */
-        div.row-widget.stButton {
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-        /* Colonnes sans espacement */
-        div[data-testid="column"] {
-            padding: 0 2px !important;
-        }
-        /* Expander personnalisé pour les emojis */
         div.streamlit-expanderHeader {
             background: #21262d !important;
             border-radius: 20px !important;
@@ -432,90 +492,30 @@ def feed_page():
             background: transparent !important;
             padding: 8px 0 0 0 !important;
         }
-        /* Stats en ligne compacte */
         .stats-line {
             display: flex;
             gap: 15px;
             color: #8b949e;
             font-size: 13px;
-            margin: 5px 0;
+            margin: 8px 0;
         }
         .stats-line span {
             display: flex;
             align-items: center;
             gap: 3px;
         }
-        /* En-tête compact */
-        .post-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 8px;
-        }
-        .post-header h4 {
-            margin: 0;
-            font-size: 15px;
-        }
-        .post-header .date {
-            color: #8b949e;
-            font-size: 12px;
+        .trending-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(45deg, #ff9d00, #ff4b4b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- FONCTIONS UTILITAIRES (inchangées) ---
-    from PIL import Image
-    import io
-
-    def upload_optimized_media(file):
-        try:
-            if file.type.startswith("image/"):
-                img = Image.open(file)
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                buffer = io.BytesIO()
-                quality = 85 if file.size < 1024*1024 else 70
-                img.save(buffer, format="JPEG", quality=quality, optimize=True)
-                file_data = buffer.getvalue()
-                content_type = "image/jpeg"
-                file_name = f"{uuid.uuid4()}.jpg"
-            else:
-                file_data = file.getvalue()
-                content_type = file.type
-                ext = file.name.split(".")[-1]
-                file_name = f"{uuid.uuid4()}.{ext}"
-            path = f"{user.id}/{file_name}"
-            supabase.storage.from_("media").upload(
-                path=path,
-                file=file_data,
-                file_options={"content-type": content_type}
-            )
-            return path, content_type
-        except Exception as e:
-            st.error(f"Erreur upload : {e}")
-            return None, None
-
-    def get_signed_media_url(path: str) -> str:
-        if not path:
-            return None
-        try:
-            res = supabase.storage.from_("media").create_signed_url(path, 3600)
-            return res['signedURL']
-        except Exception as e:
-            return None
-
-    def delete_post_with_media(post_id, media_path):
-        try:
-            if media_path:
-                supabase.storage.from_("media").remove([media_path])
-            supabase.table("posts").delete().eq("id", post_id).execute()
-            st.toast("🗑️ Post supprimé")
-            time.sleep(0.5)
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erreur suppression : {e}")
-
-    # --- SECTION TENDANCES (inchangée) ---
+    # --- SECTION TENDANCES ---
     st.markdown('<p class="trending-title">🔥 Tendances</p>', unsafe_allow_html=True)
     try:
         tips_24h = supabase.table("tips") \
@@ -548,7 +548,7 @@ def feed_page():
 
     st.divider()
 
-    # --- PUBLICATION RAPIDE (inchangée) ---
+    # --- PUBLICATION RAPIDE ---
     with st.container(border=True):
         col_av, col_input = st.columns([1, 5])
         with col_av:
@@ -602,7 +602,7 @@ def feed_page():
     # --- AFFICHAGE COMPACT DES POSTS ---
     for post in posts.data:
         with st.container(border=True):
-            # Header compact
+            # Header
             col_avatar, col_header = st.columns([1, 8])
             with col_avatar:
                 avatar = post["profiles"].get("profile_pic")
@@ -614,7 +614,7 @@ def feed_page():
             if post.get("text"):
                 st.markdown(f"### {post['text']}")
 
-            # Média (inchangé)
+            # Média
             if post.get("media_path"):
                 media_url = get_signed_media_url(post["media_path"])
                 if media_url:
@@ -633,7 +633,7 @@ def feed_page():
                         elif ext in ['mp3','wav']:
                             st.audio(media_url)
 
-            # Statistiques en ligne (compact)
+            # Statistiques
             likes = supabase.table("likes").select("*", count="exact").eq("post_id", post["id"]).execute().count
             comments = supabase.table("comments").select("*", count="exact").eq("post_id", post["id"]).execute().count
             tips = supabase.table("tips").select("*", count="exact").eq("post_id", post["id"]).execute().count
@@ -646,63 +646,44 @@ def feed_page():
             </div>
             """, unsafe_allow_html=True)
 
-            # Bouton like compact
-            if st.button("❤️", key=f"like_{post['id']}", help="J'aime"):
-                try:
-                    supabase.table("likes").insert({"post_id": post["id"], "user_id": user.id}).execute()
-                    st.rerun()
-                except:
-                    st.error("Déjà liké")
+            # Bouton like toggle
+            if st.button(f"❤️ {likes}", key=f"like_{post['id']}", use_container_width=True):
+                action = toggle_like(post['id'], user.id)
+                st.toast(f"❤️ Like {action}")
+                time.sleep(0.3)
+                st.rerun()
 
-            # TIROIR D'ÉMOJIS INTELLIGENT (se replie après utilisation)
+            # TIROIR D'ÉMOJIS
             with st.expander("💬 Réagir avec KC", expanded=False):
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
                 with col_e1:
-                    if st.button("🔥 10", key=f"tip10_{post['id']}", help="Offrir 10 KC", use_container_width=True):
-                        try:
-                            supabase.rpc('process_tip', {
-                                'p_post_id': post['id'],
-                                'p_sender_id': user.id,
-                                'p_receiver_id': post['user_id'],
-                                'p_amount': 10,
-                                'p_emoji': '🔥'
-                            }).execute()
+                    if st.button("🔥 10", key=f"tip10_{post['id']}", use_container_width=True):
+                        success, error = process_tip(post['id'], user.id, post['user_id'], 10, '🔥')
+                        if success:
                             st.toast("🔥 +10 KC !")
                             time.sleep(0.3)
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Erreur : {e}")
+                        else:
+                            st.error(f"Erreur : {error}")
                 with col_e2:
-                    if st.button("💎 50", key=f"tip50_{post['id']}", help="Offrir 50 KC", use_container_width=True):
-                        try:
-                            supabase.rpc('process_tip', {
-                                'p_post_id': post['id'],
-                                'p_sender_id': user.id,
-                                'p_receiver_id': post['user_id'],
-                                'p_amount': 50,
-                                'p_emoji': '💎'
-                            }).execute()
+                    if st.button("💎 50", key=f"tip50_{post['id']}", use_container_width=True):
+                        success, error = process_tip(post['id'], user.id, post['user_id'], 50, '💎')
+                        if success:
                             st.toast("💎 +50 KC !")
                             time.sleep(0.3)
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Erreur : {e}")
+                        else:
+                            st.error(f"Erreur : {error}")
                 with col_e3:
-                    if st.button("👑 100", key=f"tip100_{post['id']}", help="Offrir 100 KC", use_container_width=True):
-                        try:
-                            supabase.rpc('process_tip', {
-                                'p_post_id': post['id'],
-                                'p_sender_id': user.id,
-                                'p_receiver_id': post['user_id'],
-                                'p_amount': 100,
-                                'p_emoji': '👑'
-                            }).execute()
+                    if st.button("👑 100", key=f"tip100_{post['id']}", use_container_width=True):
+                        success, error = process_tip(post['id'], user.id, post['user_id'], 100, '👑')
+                        if success:
                             st.balloons()
                             st.toast("👑 +100 KC !")
                             time.sleep(0.3)
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Erreur : {e}")
+                        else:
+                            st.error(f"Erreur : {error}")
                 with col_e4:
                     with st.popover("💬", help="Voir commentaires"):
                         comments_data = supabase.table("comments").select(
@@ -712,19 +693,15 @@ def feed_page():
                             st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
                         new_comment = st.text_input("", placeholder="Commenter...", key=f"com_{post['id']}")
                         if st.button("Envoyer", key=f"send_{post['id']}"):
-                            if new_comment.strip():
-                                supabase.table("comments").insert({
-                                    "post_id": post["id"],
-                                    "user_id": user.id,
-                                    "text": new_comment
-                                }).execute()
+                            if add_comment(post['id'], user.id, new_comment):
                                 st.rerun()
 
-            # Suppression (compact)
+            # BOUTON SUPPRESSION (propriétaire ou admin)
             if post["user_id"] == user.id or (is_admin() if 'is_admin' in dir() else False):
                 if st.button("🗑️ Supprimer", key=f"del_{post['id']}", type="secondary"):
-                    delete_post_with_media(post["id"], post.get("media_path"))
-                    st.rerun()
+                    if delete_post_and_media(post["id"], post.get("media_path")):
+                        time.sleep(0.5)
+                        st.rerun()
 
 def messages_page():
     st.header("🌌 Tunnel Souverain TTU-MC³")

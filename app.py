@@ -653,13 +653,56 @@ def messages_page():
     # --- 6. APPEL DU FRAGMENT ---
     chat_fragment(selected_t_id, user_map, shared_k, real_time)
 
+# =====================================================
+# DESIGN & CSS (SANS BUG)
+# =====================================================
+def apply_custom_design():
+    """Applique le style CSS personnalisé à l'application."""
+    st.markdown("""
+        <style>
+        .stApp { background-color: #0e1117; }
+        [data-testid="stMetricValue"] { font-size: 1.6rem !important; color: #ff9d00 !important; }
+        .stButton>button { width: 100%; border-radius: 10px; font-weight: 600; }
+        div[data-testid="stExpander"] { border-radius: 10px; border: 1px solid #30363d; }
+        /* Style pour les cartes d'annonces */
+        div[data-testid="column"] > div[data-testid="stVerticalBlock"] > div[data-testid="stContainer"] {
+            transition: transform 0.2s;
+        }
+        div[data-testid="column"] > div[data-testid="stVerticalBlock"] > div[data-testid="stContainer"]:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+# =====================================================
+# NOTIFICATIONS
+# =====================================================
+def show_notifications():
+    """Affiche les notifications non lues de l'utilisateur."""
+    try:
+        notifs = supabase.table("notifications").select("*").eq("user_id", user.id).eq("is_read", False).execute()
+        if notifs.data:
+            with st.expander(f"🔔 Notifications ({len(notifs.data)})", expanded=False):
+                for n in notifs.data:
+                    col_n1, col_n2 = st.columns([4, 1])
+                    col_n1.write(f"**{n['title']}**\n{n['message']}")
+                    if col_n2.button("✓", key=f"read_{n['id']}"):
+                        supabase.table("notifications").update({"is_read": True}).eq("id", n['id']).execute()
+                        st.rerun()
+    except Exception as e:
+        # En cas d'erreur (ex: table pas encore créée), on ignore silencieusement
+        pass
+
+# =====================================================
+# PAGE MARKETPLACE (VERSION COMPLÈTE ET CORRIGÉE)
+# =====================================================
 def marketplace_page():
-    # Application du design personnalisé (doit être défini avant)
-    apply_custom_design()
+    apply_custom_design()  # Maintenant défini avant !
     st.header("🏪 Marketplace Souverain")
 
     # --- SECTION NOTIFICATIONS ---
-    show_notifications()  # suppose que cette fonction est définie et utilise supabase/user
+    show_notifications()
 
     # --- INITIALISATION DES ÉTATS DE SESSION POUR FILTRES ---
     if "search_query" not in st.session_state:
@@ -667,7 +710,7 @@ def marketplace_page():
     if "selected_category" not in st.session_state:
         st.session_state.selected_category = "Toutes"
     if "edit_mode" not in st.session_state:
-        st.session_state.edit_mode = {}  # pour gérer l'édition des annonces
+        st.session_state.edit_mode = {}
 
     # --- SIDEBAR : FILTRES ET ACTIONS RAPIDES ---
     with st.sidebar:
@@ -682,13 +725,12 @@ def marketplace_page():
             cat_list = ["Toutes"] + [c["name"] for c in categories_resp.data]
         except:
             cat_list = ["Toutes", "Art", "Technologie", "Services", "Autre"]
-        category = st.selectbox("Catégorie", cat_list, 
+        category = st.selectbox("Catégorie", cat_list,
                                 index=cat_list.index(st.session_state.selected_category) if st.session_state.selected_category in cat_list else 0)
         st.session_state.selected_category = category
 
         st.divider()
         st.subheader("💰 Mon Portefeuille")
-        # Solde KC (à adapter selon ta table)
         try:
             profile = supabase.table("profiles").select("kc_balance").eq("id", user.id).execute()
             balance = profile.data[0]["kc_balance"] if profile.data else 0
@@ -746,7 +788,7 @@ def marketplace_page():
                         file_ext = img.name.split(".")[-1]
                         file_name = f"{uuid.uuid4()}.{file_ext}"
                         try:
-                            supabase.storage.from_("marketplace").upload(file_name, img.getvalue(), 
+                            supabase.storage.from_("marketplace").upload(file_name, img.getvalue(),
                                                                           {"content-type": img.type})
                             media_url = supabase.storage.from_("marketplace").get_public_url(file_name)
                         except Exception as e:
@@ -843,7 +885,6 @@ def marketplace_page():
                         # Achat
                         if st.button("🛒 Acheter", key=f"buy_{item['id']}", type="primary", use_container_width=True):
                             try:
-                                # Appel de la fonction RPC sécurisée (à créer dans Supabase)
                                 supabase.rpc('process_marketplace_purchase', {
                                     'p_listing_id': item['id'],
                                     'p_buyer_id': user.id,
@@ -851,7 +892,6 @@ def marketplace_page():
                                     'p_amount': float(item['price_kc'])
                                 }).execute()
 
-                                # Notification au vendeur
                                 supabase.table("notifications").insert({
                                     "user_id": item['user_id'],
                                     "title": "💰 Article Vendu !",

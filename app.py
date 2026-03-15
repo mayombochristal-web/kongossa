@@ -333,92 +333,60 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # PAGES
 # =====================================================
 def feed_page():
-    apply_custom_design()
-    
-    # CSS spécifique pour un feed engageant (inchangé)
-    st.markdown("""
-        <style>
-        .stImage > img {
-            border-radius: 15px;
-            object-fit: cover;
-            width: 100%;
-            max-height: 500px;
-        }
-        .stButton button {
-            background-color: #242526 !important;
-            border: 1px solid #3a3b3c !important;
-            color: #e4e6eb !important;
-            transition: all 0.2s;
-        }
-        .stButton button:hover {
-            background-color: #3a3b3c !important;
-            border-color: #ff9d00 !important;
-        }
-        .stImage > img[alt*="avatar"] {
-            border-radius: 50%;
-            object-fit: cover;
-        }
-        h1 {
-            background: linear-gradient(45deg, #ff9d00, #ff4b4b);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-size: 2.5rem !important;
-        }
-        div[data-testid="stExpander"] details {
-            background: transparent;
-            border: none;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    apply_custom_design()  # garde le design de base si tu veux, mais on va le surcharger avec un design plus avancé
+    apply_advanced_feed_design()  # design glassmorphism
 
-    st.header("🌐 Fil Souverain")
+    # Récupération du profil utilisateur (avatar)
+    try:
+        profile_data = supabase.table("profiles").select("profile_pic, username").eq("id", user.id).single().execute()
+        profile = profile_data.data
+    except:
+        profile = {"profile_pic": None, "username": user.username}
+
+    st.title("🌊 Flux Souverain")
 
     # =============================================
-    # FONCTIONS UTILITAIRES INTERNES (AMÉLIORÉES)
+    # FONCTIONS UTILITAIRES AVANCÉES
     # =============================================
-    def get_public_url(bucket: str, path: str) -> str:
-        """Tente d'obtenir une URL publique ; si échec, utilise une URL signée."""
+    @st.cache_data(ttl=3600)
+    def get_cached_media_url(path: str) -> str:
+        """URL signée mise en cache pour 1 heure."""
         try:
-            # Essayer d'abord l'URL publique
-            url = supabase.storage.from_(bucket).get_public_url(path)
-            return url
-        except:
-            try:
-                # Fallback : URL signée valable 1 heure
-                signed = supabase.storage.from_(bucket).create_signed_url(path, 3600)
-                return signed['signedURL']
-            except Exception as e:
-                st.error(f"Impossible de générer l'URL pour le média : {e}")
-                return None
+            res = supabase.storage.from_("media").create_signed_url(path, 3600)
+            return res['signedURL']
+        except Exception as e:
+            st.error(f"Erreur de lien média : {e}")
+            return None
 
     def upload_file(bucket: str, file, user_id: str) -> str:
-        """Upload avec gestion robuste du content-type (basée sur l'extension)."""
         ext = file.name.split(".")[-1].lower()
-        # Mapping des extensions aux types MIME
         mime_map = {
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'png': 'image/png',
-            'mp4': 'video/mp4',
-            'mp3': 'audio/mpeg'
+            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+            'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm',
+            'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg'
         }
         content_type = mime_map.get(ext, 'application/octet-stream')
-        
         path = f"{user_id}/{uuid.uuid4()}.{ext}"
         try:
             supabase.storage.from_(bucket).upload(
-                file=file.getvalue(),
                 path=path,
-                file_options={"content-type": content_type}
+                file=file.getvalue(),
+                file_options={"content-type": content_type, "cache-control": "3600"}
             )
             return path
         except Exception as e:
             st.error(f"Erreur upload : {e}")
             return None
 
-    def process_emoji_payment(post_id: str, receiver_id: str, emoji: str, amount: int):
-        """Traite un don KC à un post (inchangé)."""
+    def fast_tip(post_id: str, amount: int, emoji: str):
+        """Don rapide de KC."""
         try:
+            # Récupérer l'ID du propriétaire du post
+            post_owner = supabase.table("posts").select("user_id").eq("id", post_id).single().execute()
+            receiver_id = post_owner.data["user_id"]
+            if receiver_id == user.id:
+                st.warning("Vous ne pouvez pas vous envoyer un don à vous-même.")
+                return
             supabase.rpc('process_tip', {
                 'p_post_id': post_id,
                 'p_sender_id': user.id,
@@ -426,6 +394,7 @@ def feed_page():
                 'p_amount': amount,
                 'p_emoji': emoji
             }).execute()
+            # Notification
             supabase.table("notifications").insert({
                 "user_id": receiver_id,
                 "title": f"🎁 Don reçu !",
@@ -438,7 +407,6 @@ def feed_page():
             st.error(f"Erreur de transaction : {e}")
 
     def delete_post(post_id: str):
-        """Supprime un post et son média associé (inchangé)."""
         try:
             post = supabase.table("posts").select("media_path").eq("id", post_id).single().execute()
             if post.data and post.data.get("media_path"):
@@ -446,33 +414,96 @@ def feed_page():
             supabase.table("posts").delete().eq("id", post_id).execute()
             st.toast("Post supprimé.")
         except Exception as e:
-            st.error(f"Erreur lors de la suppression : {e}")
+            st.error(f"Erreur suppression : {e}")
 
     # =============================================
-    # 1. ZONE DE CRÉATION DE POST (inchangée)
+    # SECTION TRENDING (Posts populaires en KC)
     # =============================================
-    with st.expander("🎥 Partager un moment", expanded=False):
-        with st.form("new_post_form", clear_on_submit=True):
-            col_text, col_media = st.columns([2, 1])
-            with col_text:
-                post_text = st.text_area("", placeholder="Exprimez-vous...", label_visibility="collapsed")
-            with col_media:
-                media_file = st.file_uploader("", type=["png", "jpg", "mp4", "mp3"], label_visibility="collapsed")
-            
-            if st.form_submit_button("🚀 Propulser", use_container_width=True, type="primary"):
-                if post_text or media_file:
+    st.subheader("🔥 Tendances")
+    try:
+        # On récupère les posts des dernières 24h, on les trie par somme des tips
+        # Si table 'tips' existe, on peut faire une requête plus précise. Sinon, on se base sur les likes (simulé).
+        # Ici, on suppose que la table 'tips' enregistre les dons avec 'post_id' et 'amount'.
+        # On va faire une requête avec jointure pour avoir les posts + total des dons.
+        trending_query = """
+        SELECT p.id, p.user_id, p.text, p.media_path, p.media_type, p.created_at,
+               pr.username, pr.profile_pic,
+               COALESCE(SUM(t.amount), 0) as total_tips
+        FROM posts p
+        JOIN profiles pr ON p.user_id = pr.id
+        LEFT JOIN tips t ON p.id = t.post_id AND t.created_at > NOW() - INTERVAL '24 hours'
+        WHERE p.created_at > NOW() - INTERVAL '24 hours'
+        GROUP BY p.id, pr.username, pr.profile_pic
+        ORDER BY total_tips DESC
+        LIMIT 5
+        """
+        # On exécute la requête SQL via Supabase (nécessite la fonction RPC ou client SQL)
+        # Alternative : utiliser le client SQL raw si disponible.
+        # Sinon, on peut simplement prendre les derniers posts et compter les dons en mémoire (simplifié)
+        # Pour éviter la complexité, on va utiliser une approche simple : récupérer tous les posts récents et les trier manuellement.
+        recent = supabase.table("posts").select("*, profiles!inner(username, profile_pic)").gte("created_at", (datetime.utcnow() - timedelta(days=1)).isoformat()).order("created_at", desc=True).limit(20).execute()
+        if recent.data:
+            # Récupérer les tips pour ces posts (si table tips existe)
+            post_ids = [p['id'] for p in recent.data]
+            tips = supabase.table("tips").select("post_id, amount").in_("post_id", post_ids).gte("created_at", (datetime.utcnow() - timedelta(days=1)).isoformat()).execute()
+            tip_sum = {}
+            for tip in tips.data:
+                tip_sum[tip['post_id']] = tip_sum.get(tip['post_id'], 0) + tip['amount']
+            # Ajouter le total à chaque post
+            for p in recent.data:
+                p['total_tips'] = tip_sum.get(p['id'], 0)
+            # Trier
+            trending = sorted(recent.data, key=lambda x: x['total_tips'], reverse=True)[:5]
+        else:
+            trending = []
+    except Exception as e:
+        st.warning("Module tendances temporairement indisponible.")
+        trending = []
+
+    if trending:
+        cols = st.columns(len(trending))
+        for i, post in enumerate(trending):
+            with cols[i]:
+                with st.container(border=True):
+                    if post.get("media_path"):
+                        media_url = get_cached_media_url(post["media_path"])
+                        if media_url:
+                            ext = post["media_path"].split(".")[-1].lower()
+                            if ext in ['jpg','jpeg','png','webp']:
+                                st.image(media_url, use_container_width=True)
+                            elif ext in ['mp4','mov','webm']:
+                                st.video(media_url)
+                    st.markdown(f"**{post['profiles']['username']}**")
+                    st.caption(f"🔥 {post['total_tips']} KC")
+    else:
+        st.caption("Aucune tendance pour l'instant.")
+
+    st.divider()
+
+    # =============================================
+    # QUICK PUBLISH (Style FB Modern)
+    # =============================================
+    with st.container(border=True):
+        col_av, col_in = st.columns([1, 5])
+        with col_av:
+            avatar = profile.get("profile_pic")
+            st.image(avatar if avatar else "https://via.placeholder.com/50", width=50)
+        with col_in:
+            post_text = st.text_area("Exprimez-vous...", placeholder="Quoi de neuf ?", label_visibility="collapsed", key="post_input")
+
+        c1, c2, c3 = st.columns([1, 1, 1])
+        with c1:
+            upload = st.file_uploader("📷 Média", type=["png", "jpg", "jpeg", "mp4", "mov", "webm", "mp3", "wav", "ogg"], label_visibility="collapsed", key="media_upload")
+        with c2:
+            if st.button("🚀 Propulser", use_container_width=True, type="primary"):
+                if post_text or upload:
                     try:
                         media_path = None
                         media_type = None
-                        if media_file:
-                            # Vérification via l'extension plutôt que le type MIME déclaré
-                            ext = media_file.name.split(".")[-1].lower()
-                            if ext not in ['jpg', 'jpeg', 'png', 'mp4', 'mp3']:
-                                st.error("Extension de fichier non supportée. Utilisez JPG, PNG, MP4 ou MP3.")
-                                st.stop()
-                            media_path = upload_file("media", media_file, user.id)
-                            media_type = f"image/{ext}" if ext in ['jpg','jpeg','png'] else f"video/{ext}" if ext=='mp4' else f"audio/{ext}"
-                        
+                        if upload:
+                            ext = upload.name.split(".")[-1].lower()
+                            media_path = upload_file("media", upload, user.id)
+                            media_type = f"image/{ext}" if ext in ['jpg','jpeg','png','webp'] else f"video/{ext}" if ext in ['mp4','mov','webm'] else f"audio/{ext}"
                         supabase.table("posts").insert({
                             "user_id": user.id,
                             "text": post_text if post_text else None,
@@ -480,24 +511,23 @@ def feed_page():
                             "media_type": media_type,
                             "created_at": datetime.utcnow().isoformat()
                         }).execute()
-                        
                         st.toast("✨ Post publié !")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erreur lors de la publication : {e}")
+                        st.error(f"Erreur publication : {e}")
                 else:
                     st.warning("Écrivez quelque chose ou ajoutez un média.")
 
     # =============================================
-    # 2. RÉCUPÉRATION DU FLUX (inchangée)
+    # RÉCUPÉRATION DU FLUX PRINCIPAL
     # =============================================
     try:
         posts = supabase.table("posts").select(
             "*, profiles!inner(username, profile_pic)"
         ).order("created_at", desc=True).limit(30).execute()
     except Exception as e:
-        st.error("Impossible de charger le fil d'actualité.")
+        st.error("Impossible de charger le fil.")
         return
 
     if not posts.data:
@@ -505,11 +535,11 @@ def feed_page():
         return
 
     # =============================================
-    # 3. AFFICHAGE DES POSTS (AMÉLIORÉ)
+    # AFFICHAGE DES POSTS
     # =============================================
     for post in posts.data:
         with st.container(border=True):
-            # --- HEADER ---
+            # Header
             col_avatar, col_header = st.columns([1, 6])
             with col_avatar:
                 avatar = post["profiles"].get("profile_pic")
@@ -518,61 +548,50 @@ def feed_page():
                 st.markdown(f"**{post['profiles']['username']}**")
                 st.caption(f"{post['created_at'][:10]} à {post['created_at'][11:16]}")
 
-            # --- CORPS DU POST ---
+            # Contenu texte
             if post.get("text"):
                 st.markdown(f"### {post['text']}")
 
+            # Média
             if post.get("media_path"):
-                media_url = get_public_url("media", post["media_path"])
+                media_url = get_cached_media_url(post["media_path"])
                 if media_url:
-                    m_type = post.get("media_type", "")
-                    # Déterminer le type à afficher
-                    if "image" in m_type:
+                    ext = post["media_path"].split(".")[-1].lower()
+                    if ext in ['jpg','jpeg','png','webp']:
                         st.image(media_url, use_container_width=True)
-                    elif "video" in m_type:
+                    elif ext in ['mp4','mov','webm']:
                         st.video(media_url)
-                    elif "audio" in m_type:
+                    elif ext in ['mp3','wav','ogg']:
                         st.audio(media_url)
                     else:
-                        # Fallback sur l'extension
-                        ext = post["media_path"].split(".")[-1].lower()
-                        if ext in ['jpg', 'jpeg', 'png']:
-                            st.image(media_url, use_container_width=True)
-                        elif ext == 'mp4':
-                            st.video(media_url)
-                        elif ext == 'mp3':
-                            st.audio(media_url)
-                        else:
-                            st.caption("📁 Fichier non affichable")
+                        st.warning("Format non supporté.")
                 else:
-                    st.caption("📁 Média temporairement indisponible")
+                    st.caption("Média indisponible")
 
             st.divider()
 
-            # --- INTERACTIONS DANS UN EXPANDER ---
-            with st.expander("💬 Réagir / Offrir des KC", expanded=False):
-                cols = st.columns(5)
-                with cols[0]:
-                    if st.button("👍", key=f"like_{post['id']}"):
-                        st.toast("➕ Like (à implémenter)")
-                with cols[1]:
-                    if st.button("💬", key=f"comment_{post['id']}"):
-                        st.info("Commentaires à venir")
-                with cols[2]:
-                    if st.button("🔥 10", key=f"tip10_{post['id']}", help="Offrir 10 KC"):
-                        process_emoji_payment(post['id'], post['user_id'], "🔥", 10)
-                with cols[3]:
-                    if st.button("💎 50", key=f"tip50_{post['id']}", help="Offrir 50 KC"):
-                        process_emoji_payment(post['id'], post['user_id'], "💎", 50)
-                with cols[4]:
-                    if st.button("👑 100", key=f"tip100_{post['id']}", help="Offrir 100 KC"):
-                        process_emoji_payment(post['id'], post['user_id'], "👑", 100)
-
-            # --- OPTION DE SUPPRESSION POUR L'AUTEUR ---
-            if post["user_id"] == user.id:
-                if st.button("🗑️ Supprimer ce post", key=f"del_{post['id']}", type="secondary"):
-                    delete_post(post["id"])
-                    st.rerun()
+            # Barre d'actions hybride (visible)
+            action_cols = st.columns([1, 1, 1, 1, 1])
+            with action_cols[0]:
+                if st.button("❤️", key=f"like_{post['id']}"):
+                    st.toast("Like (à implémenter)")
+            with action_cols[1]:
+                if st.button("🔥", key=f"tip10_{post['id']}", help="10 KC"):
+                    fast_tip(post['id'], 10, "🔥")
+            with action_cols[2]:
+                if st.button("💎", key=f"tip50_{post['id']}", help="50 KC"):
+                    fast_tip(post['id'], 50, "💎")
+            with action_cols[3]:
+                if st.button("👑", key=f"tip100_{post['id']}", help="100 KC"):
+                    fast_tip(post['id'], 100, "👑")
+            with action_cols[4]:
+                if post["user_id"] == user.id:
+                    if st.button("🗑️", key=f"del_{post['id']}", help="Supprimer"):
+                        delete_post(post["id"])
+                        st.rerun()
+                else:
+                    # Optionnel : signaler, etc.
+                    st.button("🚩", key=f"flag_{post['id']}", help="Signaler")
 
 def profile_page():
     apply_custom_design()

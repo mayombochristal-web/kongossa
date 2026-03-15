@@ -481,83 +481,91 @@ def profile_page():
     col2.metric("Abonnements", following.count)
 
 def messages_page():
-    st.title("🌌 Centre de Contrôle des Tunnels")
+    st.header("🌌 Tunnel Souverain & Messagerie TTU")
 
-    # --- SECTION A : GESTION DES TUNNELS (Souveraineté) ---
-    with st.expander("🛠️ Créer ou Gérer mes Tunnels"):
-        t_name = st.text_input("Nom du nouveau tunnel")
-        t_type = st.radio("Type de visibilité", ["Secret (Privé)", "Visible (Public)"])
-        t_key = ""
-        if t_type == "Secret (Privé)":
-            t_key = st.text_input("Définir la Courbure K (Clé Secrète)", type="password")
-
-        if st.button("Initialiser le Tunnel"):
-            k_hash = hashlib.sha256(t_key.encode()).hexdigest() if t_key else None
-            supabase.table("tunnels").insert({
-                "name": t_name,
-                "creator_id": user.id,
-                "is_private": (t_type == "Secret (Privé)"),
-                "k_hash": k_hash
-            }).execute()
-            st.success("Tunnel projeté dans le réseau !")
-            st.rerun()
-
-    # --- SECTION B : RECHERCHE & ABONNEMENT ---
-    st.divider()
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("🔎 Explorer les Tunnels Publics")
-        public_tunnels = supabase.table("tunnels").select("*").eq("is_private", False).execute()
-        for t in public_tunnels.data:
-            if st.button(f"S'abonner à {t['name']}", key=f"sub_{t['id']}"):
-                supabase.table("subscriptions").upsert({"user_id": user.id, "tunnel_id": t["id"]}).execute()
-                st.toast(f"Abonné à {t['name']}")
-
-    with col2:
-        st.subheader("🔑 Accéder à un Tunnel Secret")
-        secret_input = st.text_input("Entrer une clé K pour rejoindre", type="password")
-        if secret_input:
-            k_check = hashlib.sha256(secret_input.encode()).hexdigest()
-            target = supabase.table("tunnels").select("*").eq("k_hash", k_check).execute()
-            if target.data:
-                st.success(f"Tunnel '{target.data[0]['name']}' stabilisé !")
-                if st.button("S'y abonner"):
-                    supabase.table("subscriptions").upsert({"user_id": user.id, "tunnel_id": target.data[0]['id']}).execute()
+    # --- BARRE LATÉRALE : ACCÈS PAR COURBURE ---
+    with st.sidebar:
+        st.subheader("Stabilité du Tunnel")
+        secret_k = st.text_input("Clé de Courbure K (Secret)", type="password")
+        
+        if secret_k:
+            k_hash = hashlib.sha256(secret_k.encode()).hexdigest()
+            # Chercher si un tunnel correspond à cette courbure
+            res = supabase.table("tunnels").select("*").eq("k_hash", k_hash).execute()
+            if res.data:
+                st.success(f"✅ Tunnel '{res.data[0]['name']}' stabilisé")
+                # Auto-abonnement si non membre
+                supabase.table("tunnel_members").upsert({"user_id": user.id, "tunnel_id": res.data[0]['id']}).execute()
             else:
-                st.error("Courbure K introuvable (État Fantôme)")
+                st.error("❌ État Fantôme : Clé inconnue")
 
-    # --- SECTION C : MESSAGERIE (VRAI TEMPS RÉEL) ---
-    st.divider()
-    my_subs = supabase.table("subscriptions").select("tunnel_id, tunnels(name)").eq("user_id", user.id).execute()
-    
-    if not my_subs.data:
-        st.info("Vous n'êtes abonné à aucun tunnel.")
-        return
+    # --- GESTION DES FLUX (ABONNEMENTS) ---
+    tabs = st.tabs(["💬 Mes Discussions", "🔍 Explorer", "🛠️ Créer"])
 
-    # Choix du tunnel actif
-    tunnel_options = {s['tunnel_id']: s['tunnels']['name'] for s in my_subs.data}
-    active_t_id = st.selectbox("Sélectionner le tunnel actif", options=list(tunnel_options.keys()), format_func=lambda x: tunnel_options[x])
+    with tabs[2]: # CRÉER
+        with st.form("create_tunnel"):
+            name = st.text_input("Nom du Tunnel")
+            is_priv = st.checkbox("Rendre Secret (État Fantôme)", value=True)
+            k_code = st.text_input("Définir la clé K (si secret)", type="password")
+            if st.form_submit_button("Projeter le Tunnel"):
+                kh = hashlib.sha256(k_code.encode()).hexdigest() if k_code else None
+                new_t = supabase.table("tunnels").insert({
+                    "name": name, "creator_id": user.id, "is_private": is_priv, "k_hash": kh
+                }).execute()
+                if new_t.data:
+                    supabase.table("tunnel_members").insert({"user_id": user.id, "tunnel_id": new_t.data[0]['id']}).execute()
+                st.rerun()
 
-    # Affichage des messages
-    messages = supabase.table("messages").select("*").eq("tunnel_id", active_t_id).order("created_at").execute()
-    
-    chat_box = st.container()
-    for m in messages.data:
-        is_me = m["sender_id"] == user.id
-        with chat_box.chat_message("user" if is_me else "assistant"):
-            # On déchiffre ici si le tunnel est privé
-            st.write(decrypt_text(m["text"]))
+    with tabs[1]: # EXPLORER
+        publics = supabase.table("tunnels").select("*").eq("is_private", False).execute()
+        for t in publics.data:
+            col1, col2 = st.columns([3, 1])
+            col1.write(f"📡 {t['name']}")
+            if col2.button("Rejoindre", key=t['id']):
+                supabase.table("tunnel_members").upsert({"user_id": user.id, "tunnel_id": t['id']}).execute()
+                st.rerun()
 
-    # Envoi avec vidage automatique (st.chat_input)
-    if prompt := st.chat_input("Écrire dans le tunnel..."):
-        encrypted_msg = encrypt_text(prompt)
-        supabase.table("messages").insert({
-            "tunnel_id": active_t_id,
-            "sender_id": user.id,
-            "text": encrypted_msg
-        }).execute()
-        st.rerun() # Rafraîchissement immédiat pour vider le champ et afficher le SMS
+    with tabs[0]: # MESSAGERIE ACTIVE
+        # Récupérer les tunnels auxquels je suis membre
+        my_tunnels = supabase.table("tunnel_members").select("tunnel_id, tunnels(id, name, is_private)").eq("user_id", user.id).execute()
+        
+        if not my_tunnels.data:
+            st.info("Aucun tunnel actif. Utilisez une clé K ou explorez les tunnels publics.")
+            return
+
+        t_options = {t['tunnel_id']: t['tunnels']['name'] for t in my_tunnels.data}
+        selected_t_id = st.selectbox("Choisir un canal", options=list(t_options.keys()), format_func=lambda x: t_options[x])
+
+        if selected_t_id:
+            # Container de discussion
+            chat_box = st.container(height=400)
+            
+            # Récupération des messages
+            messages = supabase.table("messages").select("*, profiles(username)").eq("tunnel_id", selected_t_id).order("created_at").execute()
+
+            for m in messages.data:
+                is_me = m["sender"] == user.id
+                with chat_box.chat_message("user" if is_me else "assistant"):
+                    # Déchiffrement souverain
+                    try:
+                        clean_text = decrypt_text(m["text"]) # Utilise ta clé Fernet globale
+                        st.markdown(f"**{m['profiles']['username']}**: {clean_text}")
+                    except:
+                        st.caption("🔒 Message crypté (Courbure incompatible)")
+
+            # ENVOI (Le texte disparaît après validation)
+            if prompt := st.chat_input("Écrire dans le tunnel..."):
+                enc_text = encrypt_text(prompt)
+                supabase.table("messages").insert({
+                    "sender": user.id,
+                    "tunnel_id": selected_t_id,
+                    "text": enc_text
+                }).execute()
+                st.rerun() # Rafraîchissement immédiat : vide le champ et affiche le message
+
+    # AUTO-SYNC (Temps réel simulé)
+    time.sleep(5)
+    st.rerun()
 
 def marketplace_page():
     st.header("🏪 Marketplace")

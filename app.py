@@ -536,19 +536,20 @@ def messages_page():
         t_options = {t['tunnel_id']: t['tunnels']['name'] for t in my_tunnels.data}
         selected_t_id = st.selectbox("Choisir un canal", options=list(t_options.keys()), format_func=lambda x: t_options[x])
 
-        if selected_t_id:
+            if selected_t_id:
+        # Cette ligne DOIT être indentée par rapport au 'if'
         chat_box = st.container(height=450)
         
-        # 1. Récupération des messages brute (Plus stable)
+        # Toutes les lignes suivantes du bloc doivent être alignées ici
         res = supabase.table("messages").select("*").eq("tunnel_id", selected_t_id).order("created_at").execute()
         
-        # 2. Récupération des profils pour afficher les noms
         profiles_res = supabase.table("profiles").select("id, username").execute()
         user_map = {p['id']: p['username'] for p in profiles_res.data}
 
         with chat_box:
             for m in res.data:
                 is_me = m["sender"] == user.id
+   
                 author = user_map.get(m["sender"], "Inconnu")
                 
                 # Dissipation de l'état fantôme vers le texte clair

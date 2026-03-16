@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # CONSTANTES
 # =====================================================
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 Mo
+CIRCUIT_BREAKER_COOLDOWN = 60      # secondes avant réinitialisation
 
 # =====================================================
 # DÉCORATEURS DE ROBUSTESSE
@@ -299,35 +300,57 @@ def supabase_update(table, data, match_column, match_value):
     return supabase.table(table).update(data).eq(match_column, match_value).execute()
 
 @retry(max_attempts=3, delay=1)
-def supabase_delete(table, match_column, match_value):
-    return supabase.table(table).delete().eq(match_column, match_value).execute()
+def supabase_delete(table, conditions):
+    """
+    Supprime des lignes selon un dictionnaire de conditions.
+    Exemple : supabase_delete("likes", {"post_id": post_id, "user_id": user_id})
+    """
+    query = supabase.table(table).delete()
+    for col, val in conditions.items():
+        query = query.eq(col, val)
+    return query.execute()
 
 @retry(max_attempts=3, delay=1)
-def supabase_select(table, columns="*", match_column=None, match_value=None):
+def supabase_select(table, columns="*", conditions=None):
     query = supabase.table(table).select(columns)
-    if match_column:
-        query = query.eq(match_column, match_value)
+    if conditions:
+        for col, val in conditions.items():
+            query = query.eq(col, val)
     return query.execute()
 
 @retry(max_attempts=3, delay=1)
 def supabase_rpc(rpc_name, params):
     return supabase.rpc(rpc_name, params).execute()
 
-# Circuit breaker simple
+# Circuit breaker avec reset périodique
 if "supabase_failures" not in st.session_state:
     st.session_state.supabase_failures = 0
+    st.session_state.first_failure_time = None
 
 def safe_supabase_call(func, *args, **kwargs):
-    """Exécute un appel Supabase avec circuit breaker."""
+    """Exécute un appel Supabase avec circuit breaker et reset après cooldown."""
+    now = time.time()
+    # Si on est en mode dégradé, vérifier si le cooldown est passé
     if st.session_state.supabase_failures >= 5:
-        st.warning("⚠️ Service temporairement indisponible. Réduction des fonctionnalités.")
-        return None
+        if st.session_state.first_failure_time and (now - st.session_state.first_failure_time) > CIRCUIT_BREAKER_COOLDOWN:
+            # Réinitialiser après cooldown
+            st.session_state.supabase_failures = 0
+            st.session_state.first_failure_time = None
+            logger.info("Circuit breaker reset après cooldown.")
+        else:
+            st.warning("⚠️ Service temporairement indisponible. Réduction des fonctionnalités.")
+            return None
+
     try:
         result = func(*args, **kwargs)
+        # Succès : remettre le compteur à zéro
         st.session_state.supabase_failures = 0
+        st.session_state.first_failure_time = None
         return result
     except Exception as e:
         st.session_state.supabase_failures += 1
+        if st.session_state.first_failure_time is None:
+            st.session_state.first_failure_time = time.time()
         logger.error(f"Erreur Supabase: {e}")
         if st.session_state.supabase_failures >= 5:
             st.warning("⚠️ Trop d'erreurs consécutives. Mode dégradé activé.")
@@ -357,7 +380,7 @@ def delete_post(post_id):
         post = supabase.table("posts").select("media_path").eq("id", post_id).execute()
         if post.data and post.data[0].get("media_path"):
             supabase.storage.from_("media").remove([post.data[0]["media_path"]])
-        safe_supabase_call(supabase_delete, "posts", "id", post_id)
+        safe_supabase_call(supabase_delete, "posts", {"id": post_id})
         st.success("Post supprimé")
         st.rerun()
     except Exception as e:
@@ -485,7 +508,7 @@ def delete_post_and_media(post_id, media_path):
     try:
         if media_path:
             supabase.storage.from_("media").remove([media_path])
-        safe_supabase_call(supabase_delete, "posts", "id", post_id)
+        safe_supabase_call(supabase_delete, "posts", {"id": post_id})
         st.toast("🚀 Publication retirée avec succès", icon="🗑️")
         return True
     except Exception as e:
@@ -496,7 +519,7 @@ def toggle_like(post_id, user_id):
     """Toggle like : ajoute ou retire selon l'état actuel."""
     check = supabase.table("likes").select("*").eq("post_id", post_id).eq("user_id", user_id).execute()
     if check.data:
-        safe_supabase_call(supabase_delete, "likes", "post_id", post_id, additional_eq={"user_id": user_id})
+        safe_supabase_call(supabase_delete, "likes", {"post_id": post_id, "user_id": user_id})
         return "retiré"
     else:
         safe_supabase_call(supabase_insert, "likes", {"post_id": post_id, "user_id": user_id})

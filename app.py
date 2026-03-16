@@ -10,11 +10,66 @@ import base64
 from cryptography.fernet import Fernet
 from PIL import Image
 import io
+import logging
+import functools
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+# =====================================================
+# CONFIGURATION LOGGING
+# =====================================================
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # =====================================================
 # CONSTANTES
 # =====================================================
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 Mo
+
+# =====================================================
+# DÉCORATEURS DE ROBUSTESSE
+# =====================================================
+def safe_run(func):
+    """Capture les exceptions, logge et affiche un message générique."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Erreur dans {func.__name__}: {e}", exc_info=True)
+            st.error("🌋 Une erreur inattendue s'est produite. Veuillez réessayer.")
+            st.session_state.last_error = str(e)
+            return None
+    return wrapper
+
+def retry(max_attempts=3, delay=1):
+    """Réessaie une fonction en cas d'exception, avec backoff exponentiel."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_attempts - 1:
+                        raise
+                    wait = delay * (2 ** attempt)
+                    logger.warning(f"Tentative {attempt+1} échouée pour {func.__name__}, nouvel essai dans {wait}s")
+                    time.sleep(wait)
+            return None
+        return wrapper
+    return decorator
+
+def execute_with_timeout(func, timeout=5, *args, **kwargs):
+    """Exécute une fonction avec un timeout."""
+    with ThreadPoolExecutor() as executor:
+        future = executor.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            st.error("⏱️ Le serveur met trop de temps à répondre. Réessayez plus tard.")
+            return None
+        except Exception as e:
+            raise e
 
 # =====================================================
 # FONCTIONS DE CHIFFREMENT (version unique)
@@ -114,6 +169,7 @@ def parse_iso_date(date_str: str) -> datetime:
 # =====================================================
 # GESTION DE L'AUTHENTIFICATION
 # =====================================================
+@safe_run
 def login_signup():
     st.title("🌍 Bienvenue sur le réseau social GEN-Z")
     tab1, tab2 = st.tabs(["Se connecter", "Créer un compte"])
@@ -232,14 +288,54 @@ if st.sidebar.button("🚪 Déconnexion"):
     logout()
 
 # =====================================================
-# FONCTIONS UTILES
+# FONCTIONS UTILES (avec retry et timeout)
 # =====================================================
+@retry(max_attempts=3, delay=1)
+def supabase_insert(table, data):
+    return supabase.table(table).insert(data).execute()
+
+@retry(max_attempts=3, delay=1)
+def supabase_update(table, data, match_column, match_value):
+    return supabase.table(table).update(data).eq(match_column, match_value).execute()
+
+@retry(max_attempts=3, delay=1)
+def supabase_delete(table, match_column, match_value):
+    return supabase.table(table).delete().eq(match_column, match_value).execute()
+
+@retry(max_attempts=3, delay=1)
+def supabase_select(table, columns="*", match_column=None, match_value=None):
+    query = supabase.table(table).select(columns)
+    if match_column:
+        query = query.eq(match_column, match_value)
+    return query.execute()
+
+@retry(max_attempts=3, delay=1)
+def supabase_rpc(rpc_name, params):
+    return supabase.rpc(rpc_name, params).execute()
+
+# Circuit breaker simple
+if "supabase_failures" not in st.session_state:
+    st.session_state.supabase_failures = 0
+
+def safe_supabase_call(func, *args, **kwargs):
+    """Exécute un appel Supabase avec circuit breaker."""
+    if st.session_state.supabase_failures >= 5:
+        st.warning("⚠️ Service temporairement indisponible. Réduction des fonctionnalités.")
+        return None
+    try:
+        result = func(*args, **kwargs)
+        st.session_state.supabase_failures = 0
+        return result
+    except Exception as e:
+        st.session_state.supabase_failures += 1
+        logger.error(f"Erreur Supabase: {e}")
+        if st.session_state.supabase_failures >= 5:
+            st.warning("⚠️ Trop d'erreurs consécutives. Mode dégradé activé.")
+        raise e
+
 def like_post(post_id):
     try:
-        supabase.table("likes").insert({
-            "post_id": post_id,
-            "user_id": user.id
-        }).execute()
+        safe_supabase_call(supabase_insert, "likes", {"post_id": post_id, "user_id": user.id})
         st.success("👍 Like ajouté !")
         time.sleep(0.5)
         st.rerun()
@@ -250,11 +346,7 @@ def add_comment(post_id, text):
     if not text.strip():
         st.warning("Le commentaire ne peut pas être vide.")
         return
-    supabase.table("comments").insert({
-        "post_id": post_id,
-        "user_id": user.id,
-        "text": text
-    }).execute()
+    safe_supabase_call(supabase_insert, "comments", {"post_id": post_id, "user_id": user.id, "text": text})
     st.success("💬 Commentaire ajouté")
     time.sleep(0.5)
     st.rerun()
@@ -265,7 +357,7 @@ def delete_post(post_id):
         post = supabase.table("posts").select("media_path").eq("id", post_id).execute()
         if post.data and post.data[0].get("media_path"):
             supabase.storage.from_("media").remove([post.data[0]["media_path"]])
-        supabase.table("posts").delete().eq("id", post_id).execute()
+        safe_supabase_call(supabase_delete, "posts", "id", post_id)
         st.success("Post supprimé")
         st.rerun()
     except Exception as e:
@@ -393,7 +485,7 @@ def delete_post_and_media(post_id, media_path):
     try:
         if media_path:
             supabase.storage.from_("media").remove([media_path])
-        supabase.table("posts").delete().eq("id", post_id).execute()
+        safe_supabase_call(supabase_delete, "posts", "id", post_id)
         st.toast("🚀 Publication retirée avec succès", icon="🗑️")
         return True
     except Exception as e:
@@ -404,33 +496,29 @@ def toggle_like(post_id, user_id):
     """Toggle like : ajoute ou retire selon l'état actuel."""
     check = supabase.table("likes").select("*").eq("post_id", post_id).eq("user_id", user_id).execute()
     if check.data:
-        supabase.table("likes").delete().eq("post_id", post_id).eq("user_id", user_id).execute()
+        safe_supabase_call(supabase_delete, "likes", "post_id", post_id, additional_eq={"user_id": user_id})
         return "retiré"
     else:
-        supabase.table("likes").insert({"post_id": post_id, "user_id": user_id}).execute()
+        safe_supabase_call(supabase_insert, "likes", {"post_id": post_id, "user_id": user_id})
         return "ajouté"
 
 def add_comment(post_id, user_id, text):
     """Ajoute un commentaire."""
     if text.strip():
-        supabase.table("comments").insert({
-            "post_id": post_id,
-            "user_id": user_id,
-            "text": text
-        }).execute()
+        safe_supabase_call(supabase_insert, "comments", {"post_id": post_id, "user_id": user_id, "text": text})
         return True
     return False
 
 def process_tip(post_id, sender_id, receiver_id, amount, emoji):
     """Traite un don KC via RPC."""
     try:
-        supabase.rpc('process_tip', {
+        safe_supabase_call(supabase_rpc, 'process_tip', {
             'p_post_id': post_id,
             'p_sender_id': sender_id,
             'p_receiver_id': receiver_id,
             'p_amount': amount,
             'p_emoji': emoji
-        }).execute()
+        })
         return True, None
     except Exception as e:
         return False, str(e)
@@ -438,6 +526,7 @@ def process_tip(post_id, sender_id, receiver_id, amount, emoji):
 # =====================================================
 # PAGE FEED
 # =====================================================
+@safe_run
 def feed_page():
     st.header("🌐 Fil d'actualité")
 
@@ -598,15 +687,28 @@ def feed_page():
                 else:
                     st.warning("Écris ou ajoute un média")
 
-    # --- CHARGEMENT DU FLUX ---
+    # --- CHARGEMENT DU FLUX AVEC LIMITATION DYNAMIQUE ---
+    if "avg_load_time" not in st.session_state:
+        st.session_state.avg_load_time = 0.2  # valeur initiale
+
+    start_time = time.time()
     with st.spinner("🌊 Chargement..."):
         try:
+            # Déterminer la limite dynamique
+            if st.session_state.avg_load_time > 1.0:
+                POST_LIMIT = 10
+            else:
+                POST_LIMIT = 30
+
             posts = supabase.table("posts").select(
                 "*, profiles!inner(username, profile_pic)"
-            ).order("created_at", desc=True).limit(30).execute()
+            ).order("created_at", desc=True).limit(POST_LIMIT).execute()
         except Exception as e:
             st.error("Impossible de charger le fil")
             return
+
+    load_time = time.time() - start_time
+    st.session_state.avg_load_time = 0.9 * st.session_state.avg_load_time + 0.1 * load_time
 
     if not posts.data:
         st.info("🌙 Le fil est calme... Sois le premier à propulser !")
@@ -716,6 +818,10 @@ def feed_page():
                         time.sleep(0.5)
                         st.rerun()
 
+# =====================================================
+# PAGE PROFIL (avec brouillon pour édition)
+# =====================================================
+@safe_run
 def profile_page():
     st.header("👤 Mon Profil Souverain")
 
@@ -1036,10 +1142,18 @@ def profile_page():
             st.info("Module tunnels en cours d'initialisation")
 
     # =============================================
-    # ONGLET 4 : MODIFIER LE PROFIL
+    # ONGLET 4 : MODIFIER LE PROFIL (avec brouillon)
     # =============================================
     with tab_edit:
         st.subheader("⚙️ Modifier mon Profil")
+
+        # Initialisation du brouillon
+        if "profile_draft" not in st.session_state:
+            st.session_state.profile_draft = {
+                "username": profile["username"],
+                "bio": profile.get("bio", ""),
+                "location": profile.get("location", "")
+            }
 
         with st.expander("📸 Changer ma photo", expanded=False):
             uploaded_file = st.file_uploader("Choisir une image (max 5 Mo)", type=["png", "jpg", "jpeg"])
@@ -1071,32 +1185,43 @@ def profile_page():
                         st.error(f"Erreur lors de l'upload : {e}")
 
         with st.form("edit_profile_form"):
-            new_username = st.text_input("Nom d'utilisateur", value=profile["username"])
-            new_bio = st.text_area("Bio", value=profile.get("bio", ""), max_chars=160,
+            new_username = st.text_input("Nom d'utilisateur", value=st.session_state.profile_draft["username"])
+            new_bio = st.text_area("Bio", value=st.session_state.profile_draft["bio"], max_chars=160,
                                   help="160 caractères maximum")
-            new_location = st.text_input("Localisation", value=profile.get("location", ""))
+            new_location = st.text_input("Localisation", value=st.session_state.profile_draft["location"])
 
             submitted = st.form_submit_button("💾 Sauvegarder les modifications", use_container_width=True)
 
             if submitted:
-                try:
-                    updates = {
-                        "username": new_username,
-                        "bio": new_bio,
-                        "location": new_location
-                    }
+                # Validation
+                if len(new_username) < 3:
+                    st.warning("Le nom d'utilisateur doit contenir au moins 3 caractères.")
+                else:
+                    try:
+                        updates = {
+                            "username": new_username,
+                            "bio": new_bio,
+                            "location": new_location
+                        }
 
-                    supabase.table("profiles").update(updates).eq("id", user.id).execute()
+                        supabase.table("profiles").update(updates).eq("id", user.id).execute()
 
-                    st.success("✅ Profil mis à jour avec succès !")
-                    st.cache_data.clear()
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    if "duplicate key" in str(e):
-                        st.error("Ce nom d'utilisateur est déjà pris.")
-                    else:
-                        st.error(f"Erreur lors de la mise à jour : {e}")
+                        # Mettre à jour le brouillon après succès
+                        st.session_state.profile_draft = {
+                            "username": new_username,
+                            "bio": new_bio,
+                            "location": new_location
+                        }
+
+                        st.success("✅ Profil mis à jour avec succès !")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        if "duplicate key" in str(e):
+                            st.error("Ce nom d'utilisateur est déjà pris.")
+                        else:
+                            st.error(f"Erreur lors de la mise à jour : {e}")
 
     # =============================================
     # ONGLET 5 : COFFRE TTU (CLÉS)
@@ -1255,6 +1380,10 @@ def copy_tunnel_id_button(tunnel_id, tunnel_name):
         st.code(tunnel_id, language="text")
         st.caption("Sélectionnez et copiez (Ctrl+C) cet identifiant")
 
+# =====================================================
+# PAGE MESSAGES (TUNNELS)
+# =====================================================
+@safe_run
 def messages_page():
     st.header("🌌 Tunnel Souverain TTU-MC³")
 
@@ -1444,8 +1573,9 @@ def show_notifications():
         pass
 
 # =====================================================
-# PAGE MARKETPLACE (VERSION COMPLÈTE ET CORRIGÉE)
+# PAGE MARKETPLACE
 # =====================================================
+@safe_run
 def marketplace_page():
     apply_custom_design()
     st.header("🏪 Marketplace Souverain")
@@ -1638,6 +1768,10 @@ def marketplace_page():
                             except Exception as e:
                                 st.error(f"Erreur lors de l'achat : {e}")
 
+# =====================================================
+# PAGE WALLET
+# =====================================================
+@safe_run
 def wallet_page():
     st.header("💰 Mon Wallet")
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
@@ -1684,6 +1818,10 @@ def wallet_page():
     st.subheader("📜 Activité récente")
     st.info("L'historique détaillé des transactions Marketplace sera bientôt disponible.")
 
+# =====================================================
+# PAGE PARAMÈTRES
+# =====================================================
+@safe_run
 def settings_page():
     st.header("⚙️ Paramètres")
     PREMIUM_PRICE = 10000.0
@@ -1730,6 +1868,10 @@ def settings_page():
     if st.button("Supprimer mon compte", type="primary"):
         st.warning("Fonction désactivée pour le moment.")
 
+# =====================================================
+# PAGE ADMIN
+# =====================================================
+@safe_run
 def admin_page():
     st.header("🛡️ Espace Administration")
     st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")

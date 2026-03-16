@@ -168,7 +168,7 @@ def parse_iso_date(date_str: str) -> datetime:
     return datetime.fromisoformat(date_str)
 
 # =====================================================
-# GESTION DE L'AUTHENTIFICATION
+# GESTION DE L'AUTHENTIFICATION (VERSION CORRIGÉE)
 # =====================================================
 @safe_run
 def login_signup():
@@ -202,36 +202,29 @@ def login_signup():
                     st.error("Tous les champs sont obligatoires.")
                     return
                 try:
+                    # Déterminer le rôle
+                    role = "admin" if verify_admin_code(new_email, admin_code) else "user"
+                    
+                    # Inscription avec métadonnées (username et rôle)
                     res = supabase.auth.sign_up({
                         "email": new_email,
-                        "password": new_password
+                        "password": new_password,
+                        "options": {
+                            "data": {
+                                "username": username,
+                                "role": role
+                            }
+                        }
                     })
+                    
                     user = res.user
                     if not user:
                         st.error("La création du compte a échoué.")
                         return
-
-                    role = "admin" if verify_admin_code(new_email, admin_code) else "user"
-                    profile_data = {
-                        "id": user.id,
-                        "username": username,
-                        "bio": "",
-                        "location": "",
-                        "profile_pic": "",
-                        "role": role,
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    supabase.table("profiles").insert(profile_data).execute()
-
-                    # Création du wallet avec bonus admin
-                    initial_balance = 100_000_000.0 if role == "admin" else 0.0
-                    supabase.table("wallets").insert({
-                        "user_id": user.id,
-                        "kongo_balance": initial_balance,
-                        "total_mined": 0.0,
-                        "last_reward_at": datetime.now(timezone.utc).isoformat()
-                    }).execute()
-
+                    
+                    # Plus besoin d'insérer manuellement le profil et le wallet
+                    # Le trigger handle_new_user s'en charge automatiquement
+                    
                     st.success("Compte créé avec succès ! Connectez-vous.")
                     time.sleep(2)
                     st.rerun()

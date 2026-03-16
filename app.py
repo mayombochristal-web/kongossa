@@ -8,8 +8,13 @@ import hashlib
 import hmac
 import base64
 from cryptography.fernet import Fernet
-from PIL import Image 
-import io             
+from PIL import Image
+import io
+
+# =====================================================
+# CONSTANTES
+# =====================================================
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 Mo
 
 # =====================================================
 # FONCTIONS DE CHIFFREMENT (version unique)
@@ -21,11 +26,15 @@ def get_fernet_from_key(secret: str) -> Fernet:
 
 def encrypt_text(plaintext: str) -> str:
     """Chiffre un texte avec la clé stockée en session."""
+    if "current_k" not in st.session_state:
+        raise ValueError("🔐 Aucune clé K active en session")
     fernet = get_fernet_from_key(st.session_state.current_k)
     return fernet.encrypt(plaintext.encode()).decode()
 
 def decrypt_text(ciphertext: str) -> str:
     """Déchiffre un texte avec la clé stockée en session."""
+    if "current_k" not in st.session_state:
+        raise ValueError("🔐 Aucune clé K active en session")
     fernet = get_fernet_from_key(st.session_state.current_k)
     return fernet.decrypt(ciphertext.encode()).decode()
 
@@ -92,6 +101,15 @@ def verify_admin_code(email: str, code: str) -> bool:
                hmac.compare_digest(hash_string(code), admin_code_hash)
     except KeyError:
         return False
+
+# =====================================================
+# FONCTIONS UTILITAIRES DE DATE
+# =====================================================
+def parse_iso_date(date_str: str) -> datetime:
+    """Convertit une chaîne ISO en datetime aware (UTC)."""
+    if date_str.endswith('Z'):
+        date_str = date_str.replace('Z', '+00:00')
+    return datetime.fromisoformat(date_str)
 
 # =====================================================
 # GESTION DE L'AUTHENTIFICATION
@@ -214,13 +232,44 @@ if st.sidebar.button("🚪 Déconnexion"):
     logout()
 
 # =====================================================
-# FONCTIONS UTILES (avec gestion timezone)
+# FONCTIONS UTILES
 # =====================================================
-def parse_iso_date(date_str):
-    """Convertit une chaîne ISO en datetime aware (UTC)."""
-    if date_str.endswith('Z'):
-        date_str = date_str.replace('Z', '+00:00')
-    return datetime.fromisoformat(date_str)
+def like_post(post_id):
+    try:
+        supabase.table("likes").insert({
+            "post_id": post_id,
+            "user_id": user.id
+        }).execute()
+        st.success("👍 Like ajouté !")
+        time.sleep(0.5)
+        st.rerun()
+    except Exception as e:
+        st.error("Vous avez déjà liké ce post ou une erreur est survenue.")
+
+def add_comment(post_id, text):
+    if not text.strip():
+        st.warning("Le commentaire ne peut pas être vide.")
+        return
+    supabase.table("comments").insert({
+        "post_id": post_id,
+        "user_id": user.id,
+        "text": text
+    }).execute()
+    st.success("💬 Commentaire ajouté")
+    time.sleep(0.5)
+    st.rerun()
+
+def delete_post(post_id):
+    try:
+        # Récupérer le chemin du média pour le supprimer du storage
+        post = supabase.table("posts").select("media_path").eq("id", post_id).execute()
+        if post.data and post.data[0].get("media_path"):
+            supabase.storage.from_("media").remove([post.data[0]["media_path"]])
+        supabase.table("posts").delete().eq("id", post_id).execute()
+        st.success("Post supprimé")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erreur lors de la suppression : {e}")
 
 def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
     try:
@@ -296,13 +345,16 @@ def process_emoji_payment(post_id, author_id, emoji_type):
 # FONCTIONS UTILITAIRES POUR LE FEED
 # =====================================================
 def upload_optimized_media(file):
-    """Upload avec compression automatique des images."""
+    """Upload avec compression automatique des images et vérification de taille."""
+    if file.size > MAX_FILE_SIZE:
+        st.error(f"Fichier trop volumineux (max {MAX_FILE_SIZE//1024//1024} Mo).")
+        return None, None
     try:
         if file.type.startswith("image/"):
             img = Image.open(file)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-            
+
             buffer = io.BytesIO()
             quality = 85 if file.size < 1024*1024 else 70
             img.save(buffer, format="JPEG", quality=quality, optimize=True)
@@ -343,7 +395,6 @@ def delete_post_and_media(post_id, media_path):
             supabase.storage.from_("media").remove([media_path])
         supabase.table("posts").delete().eq("id", post_id).execute()
         st.toast("🚀 Publication retirée avec succès", icon="🗑️")
-        st.cache_data.clear()
         return True
     except Exception as e:
         st.error(f"Erreur lors de la suppression : {e}")
@@ -385,12 +436,16 @@ def process_tip(post_id, sender_id, receiver_id, amount, emoji):
         return False, str(e)
 
 # =====================================================
-# PAGE FEED (OPTIMISÉE AVEC FRAGMENTS ET CACHE)
+# PAGE FEED
 # =====================================================
 def feed_page():
     st.header("🌐 Fil d'actualité")
 
-    # CSS identique (conservé)
+    # Initialisation du brouillon
+    if "post_draft" not in st.session_state:
+        st.session_state.post_draft = ""
+
+    # --- CSS PREMIUM COMPACT ---
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderControl"] {
@@ -469,7 +524,7 @@ def feed_page():
         </style>
     """, unsafe_allow_html=True)
 
-    # Tendances (inchangé)
+    # --- SECTION TENDANCES ---
     st.markdown('<p class="trending-title">🔥 Tendances</p>', unsafe_allow_html=True)
     try:
         tips_24h = supabase.table("tips") \
@@ -502,18 +557,18 @@ def feed_page():
 
     st.divider()
 
-    # Publication rapide (inchangé)
+    # --- PUBLICATION RAPIDE ---
     with st.container(border=True):
         col_av, col_input = st.columns([1, 5])
         with col_av:
             avatar = profile.get("profile_pic")
             st.image(avatar if avatar else "https://via.placeholder.com/40", width=40)
         with col_input:
-            post_text = st.text_area("", placeholder="Exprimez-vous...", label_visibility="collapsed", key="post_input", height=70)
+            post_text = st.text_area("", value=st.session_state.post_draft, placeholder="Exprimez-vous...", label_visibility="collapsed", key="post_input", height=70)
 
         c1, c2, c3 = st.columns([1, 1, 1])
         with c1:
-            uploaded_file = st.file_uploader("📷", type=["png", "jpg", "jpeg", "mp4", "mov", "mp3", "wav"], 
+            uploaded_file = st.file_uploader("📷", type=["png", "jpg", "jpeg", "mp4", "mov", "mp3", "wav"],
                                             label_visibility="collapsed", key="media_upload")
         with c2:
             if st.button("🚀 Propulser", use_container_width=True, type="primary"):
@@ -523,6 +578,8 @@ def feed_page():
                             media_path, media_type = None, None
                             if uploaded_file:
                                 media_path, media_type = upload_optimized_media(uploaded_file)
+                                if media_path is None:  # erreur de taille
+                                    st.stop()
                             supabase.table("posts").insert({
                                 "user_id": user.id,
                                 "text": post_text if post_text else None,
@@ -530,21 +587,23 @@ def feed_page():
                                 "media_type": media_type,
                                 "created_at": datetime.now(timezone.utc).isoformat()
                             }).execute()
+                            st.session_state.post_draft = ""  # efface le brouillon
                             st.balloons()
                             st.toast("✨ Posté !")
                             time.sleep(1)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur : {e}")
+                            # le brouillon reste car post_text est lié à la session
                 else:
                     st.warning("Écris ou ajoute un média")
 
-    # Chargement du flux limité à 10 posts
+    # --- CHARGEMENT DU FLUX ---
     with st.spinner("🌊 Chargement..."):
         try:
             posts = supabase.table("posts").select(
                 "*, profiles!inner(username, profile_pic)"
-            ).order("created_at", desc=True).range(0, 9).execute()
+            ).order("created_at", desc=True).limit(30).execute()
         except Exception as e:
             st.error("Impossible de charger le fil")
             return
@@ -553,118 +612,114 @@ def feed_page():
         st.info("🌙 Le fil est calme... Sois le premier à propulser !")
         return
 
+    # --- AFFICHAGE COMPACT DES POSTS ---
     for post in posts.data:
-        post_fragment(post)
+        with st.container(border=True):
+            # Header
+            col_avatar, col_header = st.columns([1, 8])
+            with col_avatar:
+                avatar = post["profiles"].get("profile_pic")
+                st.image(avatar if avatar else "https://via.placeholder.com/40", width=40)
+            with col_header:
+                st.markdown(f"**{post['profiles']['username']}**  ·  {post['created_at'][:10]}")
 
-@st.fragment
-def post_fragment(post):
-    """Fragment pour chaque post - permet des rechargements indépendants"""
-    
-    with st.container(border=True):
-        col_avatar, col_header = st.columns([1, 8])
-        with col_avatar:
-            avatar = post["profiles"].get("profile_pic")
-            st.image(avatar if avatar else "https://via.placeholder.com/40", width=40)
-        with col_header:
-            st.markdown(f"**{post['profiles']['username']}**  ·  {post['created_at'][:10]}")
-        
-        if post.get("text"):
-            st.markdown(f"### {post['text']}")
+            # Texte
+            if post.get("text"):
+                st.markdown(f"### {post['text']}")
 
-        if post.get("media_path"):
-            media_url = get_cached_media_url(post["media_path"])
-            if media_url:
-                if "image" in str(post.get("media_type", "")):
-                    st.image(media_url, use_container_width=True)
-                elif "video" in str(post.get("media_type", "")):
-                    st.video(media_url)
-                elif "audio" in str(post.get("media_type", "")):
-                    st.audio(media_url)
-                else:
-                    ext = post["media_path"].split(".")[-1].lower()
-                    if ext in ['jpg','jpeg','png','webp']:
+            # Média
+            if post.get("media_path"):
+                media_url = get_signed_media_url(post["media_path"])
+                if media_url:
+                    if "image" in str(post.get("media_type", "")):
                         st.image(media_url, use_container_width=True)
-                    elif ext in ['mp4','mov','webm']:
+                    elif "video" in str(post.get("media_type", "")):
                         st.video(media_url)
-                    elif ext in ['mp3','wav']:
+                    elif "audio" in str(post.get("media_type", "")):
                         st.audio(media_url)
-
-        likes = supabase.table("likes").select("*", count="exact").eq("post_id", post["id"]).execute().count
-        comments = supabase.table("comments").select("*", count="exact").eq("post_id", post["id"]).execute().count
-        tips = supabase.table("tips").select("*", count="exact").eq("post_id", post["id"]).execute().count
-        
-        st.markdown(f"""
-        <div class="stats-line">
-            <span>❤️ {likes}</span>
-            <span>💬 {comments}</span>
-            <span>🔥 {tips}</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if st.button(f"❤️ {likes}", key=f"like_{post['id']}", use_container_width=True):
-            action = toggle_like(post['id'], user.id)
-            st.toast(f"❤️ Like {action}")
-            time.sleep(0.3)
-            st.rerun()
-
-        with st.expander("💬 Réagir avec KC", expanded=False):
-            col_e1, col_e2, col_e3, col_e4 = st.columns(4)
-            with col_e1:
-                if st.button("🔥 10", key=f"tip10_{post['id']}", use_container_width=True):
-                    success, error = process_tip(post['id'], user.id, post['user_id'], 10, '🔥')
-                    if success:
-                        st.toast("🔥 +10 KC !")
-                        time.sleep(0.3)
-                        st.rerun()
                     else:
-                        st.error(f"Erreur : {error}")
-            with col_e2:
-                if st.button("💎 50", key=f"tip50_{post['id']}", use_container_width=True):
-                    success, error = process_tip(post['id'], user.id, post['user_id'], 50, '💎')
-                    if success:
-                        st.toast("💎 +50 KC !")
-                        time.sleep(0.3)
-                        st.rerun()
-                    else:
-                        st.error(f"Erreur : {error}")
-            with col_e3:
-                if st.button("👑 100", key=f"tip100_{post['id']}", use_container_width=True):
-                    success, error = process_tip(post['id'], user.id, post['user_id'], 100, '👑')
-                    if success:
-                        st.balloons()
-                        st.toast("👑 +100 KC !")
-                        time.sleep(0.3)
-                        st.rerun()
-                    else:
-                        st.error(f"Erreur : {error}")
-            with col_e4:
-                with st.popover("💬", help="Voir commentaires"):
-                    comments_data = supabase.table("comments").select(
-                        "*, profiles(username)"
-                    ).eq("post_id", post["id"]).order("created_at").execute()
-                    for c in comments_data.data:
-                        st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
-                    new_comment = st.text_input("", placeholder="Commenter...", key=f"com_{post['id']}")
-                    if st.button("Envoyer", key=f"send_{post['id']}"):
-                        if add_comment(post['id'], user.id, new_comment):
+                        ext = post["media_path"].split(".")[-1].lower()
+                        if ext in ['jpg','jpeg','png','webp']:
+                            st.image(media_url, use_container_width=True)
+                        elif ext in ['mp4','mov','webm']:
+                            st.video(media_url)
+                        elif ext in ['mp3','wav']:
+                            st.audio(media_url)
+
+            # Statistiques
+            likes = supabase.table("likes").select("*", count="exact").eq("post_id", post["id"]).execute().count
+            comments = supabase.table("comments").select("*", count="exact").eq("post_id", post["id"]).execute().count
+            tips = supabase.table("tips").select("*", count="exact").eq("post_id", post["id"]).execute().count
+
+            st.markdown(f"""
+            <div class="stats-line">
+                <span>❤️ {likes}</span>
+                <span>💬 {comments}</span>
+                <span>🔥 {tips}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Bouton like toggle
+            if st.button(f"❤️ {likes}", key=f"like_{post['id']}", use_container_width=True):
+                action = toggle_like(post['id'], user.id)
+                st.toast(f"❤️ Like {action}")
+                time.sleep(0.3)
+                st.rerun()
+
+            # TIROIR D'ÉMOJIS (avec clé pour persistance)
+            with st.expander("💬 Réagir avec KC", expanded=False, key=f"exp_{post['id']}"):
+                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                with col_e1:
+                    if st.button("🔥 10", key=f"tip10_{post['id']}", use_container_width=True):
+                        success, error = process_tip(post['id'], user.id, post['user_id'], 10, '🔥')
+                        if success:
+                            st.toast("🔥 +10 KC !")
+                            time.sleep(0.3)
                             st.rerun()
+                        else:
+                            st.error(f"Erreur : {error}")
+                with col_e2:
+                    if st.button("💎 50", key=f"tip50_{post['id']}", use_container_width=True):
+                        success, error = process_tip(post['id'], user.id, post['user_id'], 50, '💎')
+                        if success:
+                            st.toast("💎 +50 KC !")
+                            time.sleep(0.3)
+                            st.rerun()
+                        else:
+                            st.error(f"Erreur : {error}")
+                with col_e3:
+                    if st.button("👑 100", key=f"tip100_{post['id']}", use_container_width=True):
+                        success, error = process_tip(post['id'], user.id, post['user_id'], 100, '👑')
+                        if success:
+                            st.balloons()
+                            st.toast("👑 +100 KC !")
+                            time.sleep(0.3)
+                            st.rerun()
+                        else:
+                            st.error(f"Erreur : {error}")
+                with col_e4:
+                    with st.popover("💬", help="Voir commentaires"):
+                        comments_data = supabase.table("comments").select(
+                            "*, profiles(username)"
+                        ).eq("post_id", post["id"]).order("created_at").execute()
+                        for c in comments_data.data:
+                            st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
+                        new_comment = st.text_input("", placeholder="Commenter...", key=f"com_{post['id']}")
+                        if st.button("Envoyer", key=f"send_{post['id']}"):
+                            if add_comment(post['id'], user.id, new_comment):
+                                st.rerun()
 
-        if post["user_id"] == user.id or is_admin():
-            if st.button("🗑️ Supprimer", key=f"del_{post['id']}", type="secondary"):
-                if delete_post_and_media(post["id"], post.get("media_path")):
-                    time.sleep(0.5)
-                    st.rerun()
+            # BOUTON SUPPRESSION (propriétaire ou admin)
+            if post["user_id"] == user.id or is_admin():
+                if st.button("🗑️ Supprimer", key=f"del_{post['id']}", type="secondary"):
+                    if delete_post_and_media(post["id"], post.get("media_path")):
+                        time.sleep(0.5)
+                        st.rerun()
 
-@st.cache_data(ttl=300)
-def get_cached_media_url(path):
-    return get_signed_media_url(path)
-
-# =====================================================
-# PAGE PROFIL (avec gestion de clé pour tunnels)
-# =====================================================
 def profile_page():
     st.header("👤 Mon Profil Souverain")
 
+    # --- CSS PERSONNALISÉ POUR LE PROFIL ---
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderControl"] {
@@ -709,6 +764,7 @@ def profile_page():
         </style>
     """, unsafe_allow_html=True)
 
+    # --- RÉCUPÉRATION DU PROFIL ---
     try:
         profile_data = supabase.table("profiles").select("*").eq("id", user.id).single().execute()
         profile = profile_data.data
@@ -716,64 +772,72 @@ def profile_page():
         st.error("Impossible de charger votre profil.")
         return
 
+    # --- HEADER DU PROFIL ---
     col_avatar, col_info = st.columns([1, 3])
-    
+
     with col_avatar:
         avatar = profile.get("profile_pic")
         if avatar:
             st.image(avatar, width=120)
         else:
             st.image("https://via.placeholder.com/120x120?text=Avatar", width=120)
-    
+
     with col_info:
         st.title(f"@{profile['username']}")
-        
+
+        # Badges automatiques
         badges = []
+
         if profile.get("role") == "admin":
             badges.append("🛡️ Administrateur")
         elif profile.get("role") == "moderator":
             badges.append("⚖️ Modérateur")
-        
+
         try:
             tunnels_created = supabase.table("tunnels").select("*", count="exact").eq("creator_id", user.id).execute().count
             if tunnels_created >= 3:
                 badges.append("🔑 Architecte des Tunnels")
         except:
             pass
-        
+
         try:
             sales = supabase.table("marketplace_listings").select("*", count="exact").eq("user_id", user.id).gt("sales_count", 0).execute().count
             if sales >= 1:
                 badges.append("💰 Marchand Actif")
         except:
             pass
-        
+
         try:
             posts_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute().count
             if posts_count >= 10:
                 badges.append("📢 Influenceur")
         except:
             pass
-        
+
         if badges:
             st.markdown(" ".join([f'<span class="badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
-        
+
         st.markdown(f"📍 **{profile.get('location', 'Localisation non définie')}**")
         st.markdown(f"*{profile.get('bio', 'Aucune bio pour le moment.')}*")
-        
+
         if profile.get("created_at"):
             st.caption(f"📅 Membre depuis le {profile['created_at'][:10]}")
 
     st.divider()
 
+    # --- ONGLETS DU PROFIL ---
     tab_stats, tab_activity, tab_tunnels, tab_edit, tab_vault = st.tabs([
         "📊 Statistiques", "📋 Activité", "🚇 Mes Tunnels", "⚙️ Modifier", "🔐 Coffre TTU"
     ])
 
+    # =============================================
+    # ONGLET 1 : STATISTIQUES
+    # =============================================
     with tab_stats:
         st.subheader("📊 Statistiques Globales")
+
         col1, col2, col3, col4 = st.columns(4)
-        
+
         with col1:
             try:
                 posts_count = supabase.table("posts").select("*", count="exact").eq("user_id", user.id).execute().count
@@ -785,7 +849,7 @@ def profile_page():
                 <div class="metric-label">Publications</div>
             </div>
             """, unsafe_allow_html=True)
-        
+
         with col2:
             try:
                 followers = supabase.table("follows").select("*", count="exact").eq("followed", user.id).execute().count
@@ -797,7 +861,7 @@ def profile_page():
                 <div class="metric-label">Abonnés</div>
             </div>
             """, unsafe_allow_html=True)
-        
+
         with col3:
             try:
                 following = supabase.table("follows").select("*", count="exact").eq("follower", user.id).execute().count
@@ -809,7 +873,7 @@ def profile_page():
                 <div class="metric-label">Abonnements</div>
             </div>
             """, unsafe_allow_html=True)
-        
+
         with col4:
             try:
                 likes_received = supabase.table("likes").select("*", count="exact").eq("post_id", supabase.table("posts").select("id").eq("user_id", user.id).execute().data).execute().count
@@ -823,8 +887,9 @@ def profile_page():
             """, unsafe_allow_html=True)
 
         st.divider()
+
         st.subheader("💰 Portefeuille KC")
-        
+
         try:
             wallet = supabase.table("wallets").select("*").eq("user_id", user.id).single().execute()
             if wallet.data:
@@ -834,8 +899,9 @@ def profile_page():
                 with col_w2:
                     st.metric("Total miné", f"{wallet.data['total_mined']:,.0f}")
                 with col_w3:
-                    if wallet.data.get('last_reward_at'):
-                        last = parse_iso_date(wallet.data['last_reward_at'])
+                    last_reward = wallet.data.get('last_reward_at')
+                    if last_reward:
+                        last = parse_iso_date(last_reward)
                         next_reward = last + timedelta(days=1)
                         time_left = next_reward - datetime.now(timezone.utc)
                         hours = int(time_left.total_seconds() // 3600)
@@ -844,22 +910,23 @@ def profile_page():
             st.info("Portefeuille en cours d'initialisation")
 
         st.subheader("🚇 Activité TTU-MC³")
+
         col_t1, col_t2, col_t3 = st.columns(3)
-        
+
         with col_t1:
             try:
                 messages_count = supabase.table("messages").select("*", count="exact").eq("sender", user.id).execute().count
             except:
                 messages_count = 0
             st.metric("Messages envoyés", messages_count)
-        
+
         with col_t2:
             try:
                 tunnels_member = supabase.table("tunnel_members").select("*", count="exact").eq("user_id", user.id).execute().count
             except:
                 tunnels_member = 0
             st.metric("Tunnels rejoints", tunnels_member)
-        
+
         with col_t3:
             try:
                 tunnels_created = supabase.table("tunnels").select("*", count="exact").eq("creator_id", user.id).execute().count
@@ -867,13 +934,17 @@ def profile_page():
                 tunnels_created = 0
             st.metric("Tunnels créés", tunnels_created)
 
+    # =============================================
+    # ONGLET 2 : ACTIVITÉ RÉCENTE
+    # =============================================
     with tab_activity:
         st.subheader("📋 Activité Récente")
+
         try:
             last_posts = supabase.table("posts").select(
                 "text, created_at, media_type"
             ).eq("user_id", user.id).order("created_at", desc=True).limit(5).execute()
-            
+
             if last_posts.data:
                 st.write("**📝 Dernières publications**")
                 for p in last_posts.data:
@@ -890,7 +961,7 @@ def profile_page():
             last_msgs = supabase.table("messages").select(
                 "text, created_at, tunnel_id, tunnels(name)"
             ).eq("sender", user.id).order("created_at", desc=True).limit(5).execute()
-            
+
             if last_msgs.data:
                 st.write("**💬 Derniers messages dans les tunnels**")
                 for m in last_msgs.data:
@@ -907,7 +978,7 @@ def profile_page():
             last_tips = supabase.table("tips").select(
                 "amount, emoji, created_at, sender_id, profiles!tips_sender_id_fkey(username)"
             ).eq("receiver_id", user.id).order("created_at", desc=True).limit(5).execute()
-            
+
             if last_tips.data:
                 st.write("**🔥 Derniers dons reçus**")
                 for t in last_tips.data:
@@ -918,46 +989,39 @@ def profile_page():
         except:
             pass
 
+    # =============================================
+    # ONGLET 3 : MES TUNNELS
+    # =============================================
     with tab_tunnels:
         st.subheader("🚇 Mes Tunnels")
-        
-        # Vérification de la clé active
-        if "current_k" not in st.session_state or not st.session_state.current_k:
-            st.warning("⚠️ Aucune clé active. Vos tunnels sont actuellement invisibles.")
-            with st.expander("🔑 Activer une clé"):
-                new_key = st.text_input("Entrez votre clé de courbure K", type="password", key="tunnel_key_input")
-                if st.button("Activer"):
-                    if new_key:
-                        st.session_state.current_k = new_key
-                        st.rerun()
-            st.stop()
-        
+
         try:
             tunnels = supabase.table("tunnel_members") \
                 .select("tunnel_id, tunnels(name, k_hash, created_at, creator_id)") \
                 .eq("user_id", user.id) \
                 .execute()
-            
+
             if tunnels.data:
                 for t in tunnels.data:
                     tunnel = t['tunnels']
                     with st.container(border=True):
                         col_t1, col_t2 = st.columns([3, 1])
+
                         role = "Créateur" if tunnel.get('creator_id') == user.id else "Membre"
                         col_t1.markdown(f"**{tunnel['name']}** - `{role}`")
                         col_t2.caption(f"Créé le {tunnel['created_at'][:10]}")
-                        
+
                         if tunnel.get('creator_id') == user.id:
                             copy_tunnel_id_button(t['tunnel_id'], tunnel['name'])
-                        
+
                         try:
                             members_count = supabase.table("tunnel_members").select("*", count="exact").eq("tunnel_id", t['tunnel_id']).execute().count
                             messages_count = supabase.table("messages").select("*", count="exact").eq("tunnel_id", t['tunnel_id']).execute().count
-                            
+
                             col_info1, col_info2, col_info3 = st.columns(3)
                             col_info1.caption(f"👥 {members_count} membres")
                             col_info2.caption(f"💬 {messages_count} messages")
-                            
+
                             if tunnel.get('k_hash'):
                                 col_info3.caption(f"🔑 {tunnel['k_hash'][:8]}...")
                             else:
@@ -966,12 +1030,17 @@ def profile_page():
                             pass
             else:
                 st.info("Vous n'êtes membre d'aucun tunnel.")
+                if st.button("🔍 Explorer les tunnels publics"):
+                    st.switch_page("messages_page")
         except Exception as e:
             st.info("Module tunnels en cours d'initialisation")
 
+    # =============================================
+    # ONGLET 4 : MODIFIER LE PROFIL
+    # =============================================
     with tab_edit:
         st.subheader("⚙️ Modifier mon Profil")
-        
+
         with st.expander("📸 Changer ma photo", expanded=False):
             uploaded_file = st.file_uploader("Choisir une image (max 5 Mo)", type=["png", "jpg", "jpeg"])
             if uploaded_file:
@@ -981,19 +1050,19 @@ def profile_page():
                     try:
                         ext = uploaded_file.name.split(".")[-1]
                         file_name = f"{user.id}/{uuid.uuid4()}.{ext}"
-                        
+
                         supabase.storage.from_("avatars").upload(
                             path=file_name,
                             file=uploaded_file.getvalue(),
                             file_options={"content-type": f"image/{ext}"}
                         )
-                        
+
                         avatar_url = supabase.storage.from_("avatars").get_public_url(file_name)
-                        
+
                         supabase.table("profiles").update({
                             "profile_pic": avatar_url
                         }).eq("id", user.id).execute()
-                        
+
                         st.success("✅ Photo de profil mise à jour !")
                         st.cache_data.clear()
                         time.sleep(1)
@@ -1006,9 +1075,9 @@ def profile_page():
             new_bio = st.text_area("Bio", value=profile.get("bio", ""), max_chars=160,
                                   help="160 caractères maximum")
             new_location = st.text_input("Localisation", value=profile.get("location", ""))
-            
+
             submitted = st.form_submit_button("💾 Sauvegarder les modifications", use_container_width=True)
-            
+
             if submitted:
                 try:
                     updates = {
@@ -1016,9 +1085,9 @@ def profile_page():
                         "bio": new_bio,
                         "location": new_location
                     }
-                    
+
                     supabase.table("profiles").update(updates).eq("id", user.id).execute()
-                    
+
                     st.success("✅ Profil mis à jour avec succès !")
                     st.cache_data.clear()
                     time.sleep(1)
@@ -1029,26 +1098,29 @@ def profile_page():
                     else:
                         st.error(f"Erreur lors de la mise à jour : {e}")
 
+    # =============================================
+    # ONGLET 5 : COFFRE TTU (CLÉS)
+    # =============================================
     with tab_vault:
         st.subheader("🔐 Coffre TTU-MC³")
-        
+
         st.markdown("""
         Le coffre stocke l'historique de vos clés de courbure K utilisées pour les tunnels.
         Chaque clé est hachée pour des raisons de sécurité.
         """)
-        
+
         if "current_k" in st.session_state:
             st.success("✅ Clé K active dans cette session")
             current_hash = hashlib.sha256(st.session_state.current_k.encode()).hexdigest()
             st.code(f"Hash : {current_hash}", language="text")
         else:
             st.warning("⚠️ Aucune clé active. Vos tunnels sont actuellement invisibles.")
-        
+
         st.divider()
-        
+
         try:
             keys_history = supabase.table("user_keys").select("*").eq("user_id", user.id).order("created_at", desc=True).limit(10).execute()
-            
+
             if keys_history.data:
                 st.write("**📜 Historique des clés utilisées**")
                 for k in keys_history.data:
@@ -1060,14 +1132,14 @@ def profile_page():
                 st.info("Aucune clé enregistrée. Utilisez un tunnel pour générer une clé.")
         except:
             pass
-        
+
         with st.expander("🔒 Comment fonctionne le chiffrement TTU-MC³ ?"):
             st.markdown("""
             - **Clé K** : Votre clé secrète partagée (jamais stockée en clair)
             - **Hachage** : La clé est hachée avec SHA-256 pour identifier les tunnels
             - **Chiffrement** : Les messages sont chiffrés avec Fernet (AES 128)
             - **Déchiffrement** : Impossible sans la clé K exacte
-            
+
             > Le coffre ne stocke que les hashs, jamais les clés elles-mêmes.
             """)
 
@@ -1076,9 +1148,9 @@ def profile_page():
 # =====================================================
 def join_tunnel_interface():
     """Interface pour rejoindre un tunnel avec une clé."""
-    
+
     st.subheader("🔑 Rejoindre un Tunnel")
-    
+
     with st.container(border=True):
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -1086,27 +1158,34 @@ def join_tunnel_interface():
         with col2:
             if st.button("📋 Coller", help="Coller l'ID depuis le presse-papiers"):
                 st.info("Utilisez Ctrl+V (Cmd+V sur Mac) pour coller")
-        
+
         key_input = st.text_input("Clé d'accès", type="password", placeholder="Entrez la clé secrète...", key="join_tunnel_key")
-        
+
         if st.button("🔓 Débloquer l'accès", use_container_width=True, type="primary"):
             if tunnel_id_input and key_input:
+                # Validation de l'UUID
+                try:
+                    uuid.UUID(tunnel_id_input)
+                except ValueError:
+                    st.error("❌ L'identifiant du tunnel n'est pas valide.")
+                    return
+
                 with st.spinner("Vérification en cours..."):
                     try:
                         tunnel = supabase.table("tunnels").select("name, creator_id").eq("id", tunnel_id_input).maybe_single().execute()
-                        
+
                         if tunnel.data:
                             member_check = supabase.table("tunnel_members").select("id").eq("tunnel_id", tunnel_id_input).eq("user_id", user.id).execute()
-                            
+
                             if not member_check.data:
                                 supabase.table("tunnel_members").insert({
                                     "user_id": user.id,
                                     "tunnel_id": tunnel_id_input,
                                     "joined_at": datetime.now(timezone.utc).isoformat()
                                 }).execute()
-                            
+
                             hashed_key = hashlib.sha256(key_input.encode()).hexdigest()
-                            
+
                             try:
                                 supabase.rpc('record_user_key', {
                                     'p_user_id': user.id,
@@ -1114,7 +1193,7 @@ def join_tunnel_interface():
                                     'p_tunnel_id': tunnel_id_input,
                                     'p_tunnel_name': tunnel.data['name']
                                 }).execute()
-                            except Exception:
+                            except Exception as rpc_error:
                                 supabase.table("user_keys").insert({
                                     "user_id": user.id,
                                     "key_hash": hashed_key,
@@ -1122,9 +1201,9 @@ def join_tunnel_interface():
                                     "tunnel_name": tunnel.data['name'],
                                     "created_at": datetime.now(timezone.utc).isoformat()
                                 }).execute()
-                            
+
                             st.session_state[f"tunnel_key_{tunnel_id_input}"] = key_input
-                            
+
                             st.success(f"✅ Accès validé pour le tunnel : {tunnel.data['name']}")
                             st.balloons()
                             time.sleep(1.5)
@@ -1141,27 +1220,28 @@ def join_tunnel_interface():
 # =====================================================
 def copy_tunnel_id_button(tunnel_id, tunnel_name):
     """Affiche un bouton pour copier l'ID du tunnel."""
+
     textarea_id = f"hidden_text_{tunnel_id}"
-    
+
     st.markdown(f"""
     <textarea id="{textarea_id}" style="position: absolute; left: -9999px;">{tunnel_id}</textarea>
-    
+
     <script>
     function copyToClipboard_{tunnel_id.replace('-', '_')}() {{
         var copyText = document.getElementById("{textarea_id}");
         copyText.select();
         copyText.setSelectionRange(0, 99999);
         document.execCommand("copy");
-        
+
         var tooltip = document.getElementById("tooltip_{tunnel_id.replace('-', '_')}");
         tooltip.style.display = "inline";
         setTimeout(function() {{ tooltip.style.display = "none"; }}, 2000);
     }}
     </script>
-    
+
     <div style="display: flex; align-items: center; gap: 10px;">
-        <button onclick="copyToClipboard_{tunnel_id.replace('-', '_')}()" 
-                style="background: #21262d; border: 1px solid #ff9d00; border-radius: 20px; 
+        <button onclick="copyToClipboard_{tunnel_id.replace('-', '_')}()"
+                style="background: #21262d; border: 1px solid #ff9d00; border-radius: 20px;
                        color: white; padding: 5px 15px; cursor: pointer; font-size: 14px;">
             📋 Copier l'ID
         </button>
@@ -1170,69 +1250,64 @@ def copy_tunnel_id_button(tunnel_id, tunnel_name):
         </span>
     </div>
     """, unsafe_allow_html=True)
-    
+
     with st.expander("📋 Voir l'ID à copier", expanded=False):
         st.code(tunnel_id, language="text")
         st.caption("Sélectionnez et copiez (Ctrl+C) cet identifiant")
 
-# =====================================================
-# PAGE MESSAGES (TUNNELS) avec support audio
-# =====================================================
 def messages_page():
     st.header("🌌 Tunnel Souverain TTU-MC³")
 
+    # --- 1. BARRE LATÉRALE : STABILISATION K + CONTRÔLES ---
     with st.sidebar:
         st.subheader("Paramètres de Stabilité")
         shared_k = st.text_input("Clé de Courbure K (Secret)", type="password")
-        
+
         if not shared_k:
             st.info("Tunnel en état fantôme. Entrez votre clé K.")
             st.stop()
-            
+
         st.session_state.current_k = shared_k
-            
+
         tunnel_id_hash = hashlib.sha256(shared_k.encode()).hexdigest()
         st.success(f"Phase Cohérente : {tunnel_id_hash[:8]}")
 
         st.divider()
-        
+
         with st.expander("🔑 Rejoindre un Tunnel", expanded=False):
             join_tunnel_interface()
-        
+
         st.divider()
-        
+
         real_time = st.toggle("📡 Mode Temps Réel", value=True,
                               help="Actualisation automatique (intervalle adaptatif)")
 
+    # --- 2. RECHERCHE OU CRÉATION DU TUNNEL PAR K_HASH ---
     try:
         existing = supabase.table("tunnels").select("id").eq("k_hash", tunnel_id_hash).execute()
         if existing.data:
             tunnel_id = existing.data[0]['id']
             member_check = supabase.table("tunnel_members").select("id").eq("tunnel_id", tunnel_id).eq("user_id", user.id).execute()
             if not member_check.data:
-                supabase.table("tunnel_members").insert({
-                    "user_id": user.id, 
-                    "tunnel_id": tunnel_id,
-                    "joined_at": datetime.now(timezone.utc).isoformat()
-                }).execute()
+                supabase.table("tunnel_members").insert({"user_id": user.id, "tunnel_id": tunnel_id}).execute()
         else:
             new_tunnel = supabase.table("tunnels").insert({
-                "name": f"Tunnel {shared_k[:4]}", 
-                "creator_id": user.id, 
+                "name": f"Tunnel {shared_k[:4]}",
+                "creator_id": user.id,
                 "k_hash": tunnel_id_hash,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }).execute()
             if new_tunnel.data:
                 tunnel_id = new_tunnel.data[0]['id']
                 supabase.table("tunnel_members").insert({
-                    "user_id": user.id, 
-                    "tunnel_id": tunnel_id,
-                    "joined_at": datetime.now(timezone.utc).isoformat()
+                    "user_id": user.id,
+                    "tunnel_id": tunnel_id
                 }).execute()
     except Exception as e:
         st.error(f"Erreur lors de la synchronisation du tunnel : {e}")
         return
 
+    # --- 3. DONNÉES MISES EN CACHE ---
     @st.cache_data(ttl=300)
     def get_profiles():
         resp = supabase.table("profiles").select("id, username").execute()
@@ -1250,6 +1325,7 @@ def messages_page():
         st.warning("Aucun tunnel actif détecté.")
         return
 
+    # --- 4. SÉLECTION DU CANAL ---
     default_index = list(t_options.keys()).index(tunnel_id) if tunnel_id in t_options else 0
     selected_t_id = st.selectbox(
         "Sélectionner le canal",
@@ -1259,6 +1335,7 @@ def messages_page():
         key="tunnel_selector"
     )
 
+    # --- 5. FRAGMENT DE CHAT AUTO-RAFRÎCHISSANT ---
     @st.fragment
     def chat_fragment(tunnel_id, user_map, shared_k, real_time):
         last_ts_key = f"last_ts_{tunnel_id}"
@@ -1287,29 +1364,13 @@ def messages_page():
                 is_me = m["sender"] == user.id
                 author = user_map.get(m["sender"], "Inconnu")
                 try:
-                    # Si le message contient un média audio
-                    if m.get("media_path"):
-                        media_url = get_signed_url("tunnel_media", m["media_path"])
-                        if media_url:
-                            with st.chat_message("user" if is_me else "assistant"):
-                                st.markdown(f"**{author}** a envoyé un message audio :")
-                                st.audio(media_url)
-                    else:
-                        # Message texte
-                        clear_text = decrypt_text(m["text"])
-                        with st.chat_message("user" if is_me else "assistant"):
-                            st.markdown(f"**{author}** : {clear_text}")
+                    clear_text = decrypt_text(m["text"])
+                    with st.chat_message("user" if is_me else "assistant"):
+                        st.markdown(f"**{author}** : {clear_text}")
                 except Exception:
                     st.caption("🔒 Message crypté")
 
-        # Zone de saisie : texte ou audio
-        col_text, col_audio = st.columns([4, 1])
-        with col_text:
-            prompt = st.chat_input("Projeter un message texte...")
-        with col_audio:
-            audio_file = st.file_uploader("🎤", type=["mp3", "wav", "ogg"], label_visibility="collapsed", key="audio_upload")
-
-        if prompt:
+        if prompt := st.chat_input("Projeter un message..."):
             encrypted_val = encrypt_text(prompt)
             supabase.table("messages").insert({
                 "sender": user.id,
@@ -1320,28 +1381,6 @@ def messages_page():
             st.session_state[last_ts_key] = datetime.now(timezone.utc).isoformat()
             st.rerun()
 
-        if audio_file:
-            # Upload du fichier audio
-            try:
-                ext = audio_file.name.split(".")[-1]
-                file_name = f"{tunnel_id}/{uuid.uuid4()}.{ext}"
-                supabase.storage.from_("tunnel_media").upload(
-                    path=file_name,
-                    file=audio_file.getvalue(),
-                    file_options={"content-type": audio_file.type}
-                )
-                supabase.table("messages").insert({
-                    "sender": user.id,
-                    "tunnel_id": tunnel_id,
-                    "media_path": file_name,
-                    "media_type": audio_file.type,
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                }).execute()
-                st.session_state[last_ts_key] = datetime.now(timezone.utc).isoformat()
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erreur lors de l'envoi audio : {e}")
-
         col1, col2 = st.columns([1, 5])
         with col1:
             if st.button("🔄", help="Actualiser manuellement"):
@@ -1351,24 +1390,25 @@ def messages_page():
             poll_key = f"poll_interval_{tunnel_id}"
             if poll_key not in st.session_state:
                 st.session_state[poll_key] = 5
-            
+
             if new_msgs.data:
                 st.session_state[poll_key] = 5
             else:
                 st.session_state[poll_key] = min(st.session_state[poll_key] * 1.2, 120)
-            
+
             with col2:
                 st.caption(f"⚡ prochain rafraîchissement dans {st.session_state[poll_key]:.0f}s")
-            
+
             time.sleep(st.session_state[poll_key])
             st.rerun()
 
     chat_fragment(selected_t_id, user_map, shared_k, real_time)
 
 # =====================================================
-# DESIGN & CSS
+# DESIGN & CSS (SANS BUG)
 # =====================================================
 def apply_custom_design():
+    """Applique le style CSS personnalisé à l'application."""
     st.markdown("""
         <style>
         .stApp { background-color: #0e1117; }
@@ -1389,6 +1429,7 @@ def apply_custom_design():
 # NOTIFICATIONS
 # =====================================================
 def show_notifications():
+    """Affiche les notifications non lues de l'utilisateur."""
     try:
         notifs = supabase.table("notifications").select("*").eq("user_id", user.id).eq("is_read", False).execute()
         if notifs.data:
@@ -1399,11 +1440,11 @@ def show_notifications():
                     if col_n2.button("✓", key=f"read_{n['id']}"):
                         supabase.table("notifications").update({"is_read": True}).eq("id", n['id']).execute()
                         st.rerun()
-    except Exception:
+    except Exception as e:
         pass
 
 # =====================================================
-# PAGE MARKETPLACE (avec mise à jour dashboard)
+# PAGE MARKETPLACE (VERSION COMPLÈTE ET CORRIGÉE)
 # =====================================================
 def marketplace_page():
     apply_custom_design()
@@ -1597,9 +1638,6 @@ def marketplace_page():
                             except Exception as e:
                                 st.error(f"Erreur lors de l'achat : {e}")
 
-# =====================================================
-# PAGE WALLET (correction timezone)
-# =====================================================
 def wallet_page():
     st.header("💰 Mon Wallet")
     wallet = supabase.table("wallets").select("*").eq("user_id", user.id).execute()
@@ -1623,9 +1661,9 @@ def wallet_page():
     if st.button("⛏️ Miner (récompense quotidienne)"):
         try:
             last_str = wallet_data["last_reward_at"]
-            last_reward_date = parse_iso_date(last_str)
+            last = parse_iso_date(last_str)
             now = datetime.now(timezone.utc)
-            delta = now - last_reward_date
+            delta = now - last
             if delta.total_seconds() > 86400:
                 new_balance = wallet_data["kongo_balance"] + 10
                 new_mined = wallet_data["total_mined"] + 10
@@ -1646,9 +1684,6 @@ def wallet_page():
     st.subheader("📜 Activité récente")
     st.info("L'historique détaillé des transactions Marketplace sera bientôt disponible.")
 
-# =====================================================
-# PAGE PARAMÈTRES
-# =====================================================
 def settings_page():
     st.header("⚙️ Paramètres")
     PREMIUM_PRICE = 10000.0
@@ -1695,9 +1730,6 @@ def settings_page():
     if st.button("Supprimer mon compte", type="primary"):
         st.warning("Fonction désactivée pour le moment.")
 
-# =====================================================
-# PAGE ADMIN
-# =====================================================
 def admin_page():
     st.header("🛡️ Espace Administration")
     st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")
@@ -1732,7 +1764,7 @@ def admin_page():
                     if file_url:
                         st.image(file_url, width=200)
                 if st.button("🗑️ Supprimer ce post", key=f"del_{post['id']}"):
-                    delete_post_and_media(post["id"], post.get("media_path"))
+                    delete_post(post["id"])
 
     with tab3:
         st.subheader("Journal des actions")

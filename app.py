@@ -273,7 +273,7 @@ if is_admin():
     st.sidebar.markdown("🔑 **Administrateur**")
 st.sidebar.write(f"ID : {user.id[:8]}...")
 
-menu_options = ["🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "⚙️ Paramètres"]
+menu_options = ["🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "💰 Acheter KC", "⚙️ Paramètres"]
 if is_admin():
     menu_options.append("🛡️ Admin")
 menu = st.sidebar.radio("Navigation", menu_options)
@@ -1550,6 +1550,115 @@ def messages_page():
     chat_fragment(selected_t_id, user_map, shared_k, real_time)
 
 # =====================================================
+# PAGE ACHAT DE KC
+# =====================================================
+@safe_run
+def buy_kc_page():
+    st.header("💰 Acheter des Kongo Coins (KC)")
+
+    # Récupérer le taux de change actuel
+    rate_res = supabase.table("exchange_rates").select("rate").eq("is_current", True).limit(1).execute()
+    if rate_res.data:
+        rate = rate_res.data[0]["rate"]  # 1 KC = rate FCFA
+    else:
+        rate = 10  # fallback
+    st.info(f"Taux de change actuel : **1 KC = {rate} FCFA** (soit 10 KC = 100 FCFA)")
+
+    # Récupérer les méthodes de paiement actives
+    methods_res = supabase.table("payment_methods").select("*").eq("is_active", True).execute()
+    payment_methods = {m["id"]: m["name"] for m in methods_res.data} if methods_res.data else {}
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📥 Acheter des KC")
+        with st.form("buy_form"):
+            amount_fiat = st.number_input("Montant en FCFA", min_value=100, step=100, value=1000)
+            amount_kc = amount_fiat // rate  # division entière
+            st.write(f"Vous recevrez **{amount_kc} KC**")
+
+            if payment_methods:
+                method_id = st.selectbox(
+                    "Méthode de paiement",
+                    options=list(payment_methods.keys()),
+                    format_func=lambda x: payment_methods[x]
+                )
+                method_name = payment_methods[method_id]
+                # Champs supplémentaires selon le type
+                metadata = {}
+                if "Airtel" in method_name or "Moov" in method_name:
+                    phone = st.text_input("Numéro de téléphone (format international)", placeholder="+241XXXXXXXX")
+                else:
+                    # Carte bancaire (simplifié)
+                    card_number = st.text_input("Numéro de carte", type="password")
+                    expiry = st.text_input("Date d'expiration (MM/AA)")
+                    cvv = st.text_input("CVV", type="password", max_chars=3)
+                    if card_number:
+                        metadata["card_last4"] = card_number[-4:]
+            else:
+                st.error("Aucune méthode de paiement disponible.")
+                method_id = None
+
+            submitted = st.form_submit_button("Procéder au paiement")
+
+            if submitted:
+                if not amount_fiat or amount_fiat < 100:
+                    st.error("Le montant minimum est de 100 FCFA.")
+                elif not method_id:
+                    st.error("Veuillez choisir une méthode de paiement.")
+                else:
+                    import uuid
+                    ref = str(uuid.uuid4())[:8].upper()
+                    metadata = {}
+                    if "Airtel" in method_name or "Moov" in method_name:
+                        metadata["phone"] = phone
+                    try:
+                        trans_data = {
+                            "user_id": user.id,
+                            "type": "buy",
+                            "amount_KC": amount_kc,
+                            "amount_fiat": amount_fiat,
+                            "payment_method_id": method_id,
+                            "status": "pending",
+                            "transaction_reference": ref,
+                            "metadata": metadata
+                        }
+                        supabase.table("transactions").insert(trans_data).execute()
+                        st.success(f"✅ Demande d'achat enregistrée ! Référence : {ref}")
+                        st.info("Le paiement est en cours de traitement. Vous recevrez vos KC sous peu.")
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur lors de l'enregistrement : {e}")
+
+    with col2:
+        st.subheader("📜 Historique de vos transactions")
+        try:
+            trans_res = supabase.table("transactions").select(
+                "*, payment_methods(name)"
+            ).eq("user_id", user.id).order("created_at", desc=True).limit(20).execute()
+            if trans_res.data:
+                for t in trans_res.data:
+                    with st.container(border=True):
+                        cols = st.columns([2, 1, 1])
+                        cols[0].write(f"**{t['created_at'][:16]}**")
+                        cols[1].write(f"{t['amount_KC']} KC")
+                        status = t['status']
+                        if status == 'pending':
+                            cols[2].markdown("🟡 En attente")
+                        elif status == 'completed':
+                            cols[2].markdown("✅ Complétée")
+                        elif status == 'failed':
+                            cols[2].markdown("❌ Échouée")
+                        else:
+                            cols[2].write(status)
+                        st.caption(f"Réf: {t['transaction_reference']} - {t['payment_methods']['name']}")
+            else:
+                st.info("Aucune transaction pour le moment.")
+        except Exception as e:
+            st.warning("Impossible de charger l'historique.")
+
+# =====================================================
 # DESIGN & CSS (SANS BUG)
 # =====================================================
 def apply_custom_design():
@@ -1891,7 +2000,7 @@ def settings_page():
 def admin_page():
     st.header("🛡️ Espace Administration")
     st.caption("Actions réservées à la modération -- utilisez‑les avec discernement.")
-    tab1, tab2, tab3, tab4 = st.tabs(["Utilisateurs", "Posts signalés", "Logs d'action", "Crédits"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Utilisateurs", "Posts signalés", "Logs d'action", "Crédits", "Transactions"])
 
     with tab1:
         st.subheader("Gestion des utilisateurs")
@@ -1952,6 +2061,40 @@ def admin_page():
                 }).execute()
             st.success(f"{amount:,.0f} KC ajoutés à {user_options[selected_user]}")
 
+    with tab5:
+        st.subheader("Gestion des transactions d'achat de KC")
+        try:
+            pending = supabase.table("transactions").select(
+                "*, profiles(username), payment_methods(name)"
+            ).eq("status", "pending").order("created_at").execute()
+            if pending.data:
+                for t in pending.data:
+                    with st.expander(f"Réf: {t['transaction_reference']} - {t['profiles']['username']} - {t['amount_KC']} KC ({t['amount_fiat']} FCFA)"):
+                        st.write(f"**Méthode:** {t['payment_methods']['name']}")
+                        st.write(f"**Métadonnées:** {t['metadata']}")
+                        st.write(f"**Date:** {t['created_at']}")
+                        col_a, col_b = st.columns(2)
+                        if col_a.button("✅ Marquer comme complété", key=f"comp_{t['id']}"):
+                            try:
+                                supabase.table("transactions").update({"status": "completed"}).eq("id", t["id"]).execute()
+                                wallet_res = supabase.table("wallets").select("kongo_balance").eq("user_id", t["user_id"]).single().execute()
+                                if wallet_res.data:
+                                    new_balance = wallet_res.data["kongo_balance"] + t["amount_KC"]
+                                    supabase.table("wallets").update({"kongo_balance": new_balance}).eq("user_id", t["user_id"]).execute()
+                                st.success("Transaction complétée et KC crédités.")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur : {e}")
+                        if col_b.button("❌ Marquer comme échoué", key=f"fail_{t['id']}"):
+                            supabase.table("transactions").update({"status": "failed"}).eq("id", t["id"]).execute()
+                            st.success("Transaction marquée comme échouée.")
+                            st.rerun()
+            else:
+                st.info("Aucune transaction en attente.")
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
 # =====================================================
 # ROUTEUR PRINCIPAL
 # =====================================================
@@ -1965,6 +2108,8 @@ elif menu == "🏪 Marketplace":
     marketplace_page()
 elif menu == "💰 Wallet":
     wallet_page()
+elif menu == "💰 Acheter KC":
+    buy_kc_page()
 elif menu == "⚙️ Paramètres":
     settings_page()
 elif menu == "🛡️ Admin":

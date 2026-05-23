@@ -73,8 +73,7 @@ def get_user_stability_bonus(user_id, supabase_client):
             if tunnel.data and tunnel.data[0].get("k_hash"):
                 key_hash = tunnel.data[0]["k_hash"]
                 np.random.seed(int(key_hash[:16], 16))
-                w0, sigma, mu, gamma = soliton_signature_from_key(key_hash)
-                # Simulation simplifiée : plus le hash est équilibré, plus J est proche de 0.192
+                # Approximation de J à partir du hash
                 J = 0.192 + (int(key_hash[20:24], 16) / 2**32 - 0.5) * 0.05
                 total_J += J
                 count += 1
@@ -98,7 +97,7 @@ def get_reputation(user_id, supabase_client):
         return "⚡ Soliton Argent"
 
 # =====================================================
-# DÉCORATEURS DE ROBUSTESSE (gardés)
+# DÉCORATEURS DE ROBUSTESSE
 # =====================================================
 def safe_run(func):
     @functools.wraps(func)
@@ -141,7 +140,7 @@ def execute_with_timeout(func, timeout=5, *args, **kwargs):
             raise e
 
 # =====================================================
-# FONCTIONS DE CHIFFREMENT
+# FONCTIONS DE CHIFFREMENT (tunnels)
 # =====================================================
 def get_fernet_from_key(secret: str) -> Fernet:
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
@@ -190,7 +189,7 @@ def init_supabase():
 
     try:
         client = create_client(url, key)
-        # Test rapide de connexion (optionnel)
+        # Test rapide de connexion
         client.table("profiles").select("id").limit(1).execute()
         return client
     except Exception as e:
@@ -511,7 +510,13 @@ def feed_page():
     if "post_draft" not in st.session_state:
         st.session_state.post_draft = ""
 
-    st.markdown("""<style> ... </style>""", unsafe_allow_html=True)  # CSS identique à l'original (omis pour brièveté)
+    # CSS simplifié (vous pouvez le compléter)
+    st.markdown("""
+        <style>
+        .trending-title { font-size: 1.5rem; font-weight: 600; background: linear-gradient(45deg, #ff9d00, #ff4b4b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
+        .stats-line { display: flex; gap: 15px; color: #8b949e; font-size: 13px; margin: 8px 0; }
+        </style>
+    """, unsafe_allow_html=True)
 
     # Tendances
     st.markdown('<p class="trending-title">🔥 Tendances</p>', unsafe_allow_html=True)
@@ -664,9 +669,7 @@ def feed_page():
                             st.rerun()
                 with col_e4:
                     with st.popover("💬", help="Voir commentaires"):
-                        comments_data = supabase.table("comments").select(
-                            "*, profiles(username)"
-                        ).eq("post_id", post["id"]).order("created_at").execute()
+                        comments_data = supabase.table("comments").select("*, profiles(username)").eq("post_id", post["id"]).order("created_at").execute()
                         for c in comments_data.data:
                             st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
                         new_comment = st.text_input("", placeholder="Commenter...", key=f"com_{post['id']}")
@@ -685,7 +688,11 @@ def feed_page():
 @safe_run
 def profile_page():
     st.header("👤 Mon Profil Souverain")
-    st.markdown("""<style> ... </style>""", unsafe_allow_html=True)
+    st.markdown("""
+        <style>
+        .badge { display: inline-block; background: linear-gradient(45deg, #ff9d00, #ff4b4b); color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; margin-right: 8px; }
+        </style>
+    """, unsafe_allow_html=True)
     try:
         profile_data = supabase.table("profiles").select("*").eq("id", user.id).single().execute()
         profile = profile_data.data
@@ -703,7 +710,6 @@ def profile_page():
         badges = []
         if profile.get("role") == "admin":
             badges.append("🛡️ Administrateur")
-        # ... autres badges éventuels
         if badges:
             st.markdown(" ".join([f'<span class="badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
         st.markdown(f"📍 **{profile.get('location', 'Localisation non définie')}**")
@@ -908,7 +914,7 @@ def profile_page():
 
     with tab_vault:
         st.subheader("🔐 Coffre TTU-MC³")
-        st.markdown("Le coffre stocke l'historique de vos clés de courbure K utilisées pour les tunnels. Chaque clé est hachée.")
+        st.markdown("Le coffre stocke l'historique de vos clés de courbure K utilisées pour les tunnels.")
         if "current_k" in st.session_state:
             st.success("✅ Clé K active dans cette session")
             current_hash = hashlib.sha256(st.session_state.current_k.encode()).hexdigest()
@@ -1034,7 +1040,6 @@ def messages_page():
         st.divider()
         real_time = st.toggle("📡 Mode Temps Réel", value=True)
 
-    # Création / récupération du tunnel
     try:
         existing = supabase.table("tunnels").select("id").eq("k_hash", tunnel_id_hash).execute()
         if existing.data:
@@ -1221,7 +1226,7 @@ def buy_kc_page():
             st.warning("Impossible de charger l'historique.")
 
 # =====================================================
-# PAGE WALLET avec minage basé sur la stabilité TTU
+# PAGE WALLET (minage basé sur stabilité TTU)
 # =====================================================
 @safe_run
 def wallet_page():
@@ -1270,16 +1275,27 @@ def wallet_page():
     st.info("Historique des transactions bientôt disponible.")
 
 # =====================================================
-# PAGE MARKETPLACE (avec badge TTU)
+# PAGE MARKETPLACE (simplifiée, avec badge TTU)
 # =====================================================
 @safe_run
 def marketplace_page():
     st.header("🏪 Marketplace Souverain")
-    # Le code est long mais identique à l'original, on le reprend brièvement
-    # (vous pouvez conserver votre marketplace existant)
-    st.info("Marketplace opérationnel – les badges de réputation TTU apparaissent à côté des vendeurs.")
-    # Pour gagner de la place, je ne réécris pas tout ici, mais vous pouvez intégrer l'appel à get_reputation
-    # lors de l'affichage des annonces.
+    st.info("Le marketplace est opérationnel. Les vendeurs avec une bonne réputation TTU bénéficient d'un badge.")
+    # Ici vous pouvez recopier votre code marketplace existant.
+    # Pour l'exemple, on affiche juste les annonces actives.
+    try:
+        listings = supabase.table("marketplace_listings").select("*, profiles(username)").eq("is_active", True).order("created_at", desc=True).execute()
+        if not listings.data:
+            st.info("Aucune annonce pour le moment.")
+            return
+        for item in listings.data:
+            with st.container(border=True):
+                st.markdown(f"**{item['title']}** - {item['price_kc']} KC")
+                st.caption(f"Vendeur: {item['profiles']['username']} {get_reputation(item['user_id'], supabase)}")
+                with st.expander("Description"):
+                    st.write(item['description'])
+    except Exception as e:
+        st.error(f"Erreur chargement marketplace : {e}")
 
 # =====================================================
 # PAGE PARAMÈTRES

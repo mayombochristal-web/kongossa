@@ -174,9 +174,29 @@ st.set_page_config(
 # =====================================================
 @st.cache_resource
 def init_supabase():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+    try:
+        url = st.secrets["SUPABASE_URL"].strip()
+        key = st.secrets["SUPABASE_KEY"].strip()
+    except KeyError as e:
+        st.error(f"🔴 Clé manquante dans les secrets : {e}")
+        st.stop()
+    except Exception as e:
+        st.error(f"🔴 Erreur de lecture des secrets : {e}")
+        st.stop()
+
+    if not url.startswith("https://"):
+        st.error("❌ L'URL Supabase doit commencer par https://")
+        st.stop()
+
+    try:
+        client = create_client(url, key)
+        # Test rapide de connexion (optionnel)
+        client.table("profiles").select("id").limit(1).execute()
+        return client
+    except Exception as e:
+        st.error(f"🚨 Impossible de se connecter à Supabase : {e}")
+        st.info("Vérifiez votre connexion internet et que l'URL du projet est correcte.")
+        st.stop()
 
 supabase = init_supabase()
 

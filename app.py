@@ -10,87 +10,125 @@ import base64
 from cryptography.fernet import Fernet
 from PIL import Image
 import io
-import logging
-import functools
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import numpy as np
 
 # =====================================================
-# CONFIGURATION LOGGING
+# INTÉGRATION TTU‑MC³ (sans simulateur visible)
 # =====================================================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
-# =====================================================
-# CONSTANTES
-# =====================================================
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 Mo
-CIRCUIT_BREAKER_COOLDOWN = 60      # secondes avant réinitialisation
+def soliton_signature_from_key(shared_key: str):
+    """
+    Génère les paramètres (ω₀, σ, μ, γ) d'un soliton à partir d'une clé K.
+    Ces paramètres définissent la « signature géométrique » du tunnel.
+    """
+    h = hashlib.sha256(shared_key.encode()).digest()
+    # Conversion en flottants entre des plages physiques
+    w0 = 0.5 + (int.from_bytes(h[0:4], 'big') / 2**32) * 2.5   # ω₀ ∈ [0.5, 3.0]
+    sigma = (int.from_bytes(h[4:8], 'big') / 2**32) * 2.0       # σ ∈ [0, 2]
+    mu = (int.from_bytes(h[8:12], 'big') / 2**32) * 0.05        # μ ∈ [0, 0.05]
+    gamma = (int.from_bytes(h[12:16], 'big') / 2**32) * 0.2     # γ ∈ [0, 0.2]
+    return w0, sigma, mu, gamma
 
-# =====================================================
-# DÉCORATEURS DE ROBUSTESSE
-# =====================================================
-def safe_run(func):
-    """Capture les exceptions, logge et affiche un message générique."""
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Erreur dans {func.__name__}: {e}", exc_info=True)
-            st.error("🌋 Une erreur inattendue s'est produite. Veuillez réessayer.")
-            st.session_state.last_error = str(e)
-            return None
-    return wrapper
+def rk4_step(f, y, dt, *args):
+    """Un pas de Runge-Kutta d'ordre 4 pour le système TTU-MC³."""
+    k1 = f(y, *args)
+    k2 = f(y + 0.5 * dt * k1, *args)
+    k3 = f(y + 0.5 * dt * k2, *args)
+    k4 = f(y + dt * k3, *args)
+    return y + dt * (k1 + 2*k2 + 2*k3 + k4) / 6
 
-def retry(max_attempts=3, delay=1):
-    """Réessaie une fonction en cas d'exception, avec backoff exponentiel."""
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_attempts):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    if attempt == max_attempts - 1:
-                        raise
-                    wait = delay * (2 ** attempt)
-                    logger.warning(f"Tentative {attempt+1} échouée pour {func.__name__}, nouvel essai dans {wait}s")
-                    time.sleep(wait)
-            return None
-        return wrapper
-    return decorator
+def ttu_flow(phi, omega0, sigma, mu, gamma):
+    """Système d'EDO (Φ_M, Φ_C, Φ_D)."""
+    Phi_M, Phi_C, Phi_D = phi
+    dPhi_M = Phi_C
+    dPhi_C = -omega0**2 * Phi_M + sigma**2 * Phi_D - mu * Phi_C - gamma * Phi_M**3
+    dPhi_D = -Phi_C - mu * Phi_D
+    return np.array([dPhi_M, dPhi_C, dPhi_D])
 
-def execute_with_timeout(func, timeout=5, *args, **kwargs):
-    """Exécute une fonction avec un timeout."""
-    with ThreadPoolExecutor() as executor:
-        future = executor.submit(func, *args, **kwargs)
-        try:
-            return future.result(timeout=timeout)
-        except TimeoutError:
-            st.error("⏱️ Le serveur met trop de temps à répondre. Réessayez plus tard.")
-            return None
-        except Exception as e:
-            raise e
+def invariant_J(phi):
+    """Invariant ponctuel J = (Φ_M Φ_C Φ_D) / (‖Φ‖²)^(3/2)."""
+    Phi_M, Phi_C, Phi_D = phi
+    denom = (Phi_M**2 + Phi_C**2 + Phi_D**2)**1.5 + 1e-12
+    return (Phi_M * Phi_C * Phi_D) / denom
+
+def compute_tunnel_stability(tunnel_id, shared_key, steps=100, dt=0.02):
+    """
+    Simule brièvement l'évolution du soliton du tunnel et retourne
+    la valeur moyenne de l'invariant J sur les dernières étapes.
+    Plus J est proche de 0.192, plus le tunnel est stable.
+    """
+    w0, sigma, mu, gamma = soliton_signature_from_key(shared_key)
+    # Condition initiale arbitraire (profil soliton approché)
+    phi = np.array([1.0, 0.0, 0.0])
+    J_vals = []
+    for _ in range(steps):
+        phi = rk4_step(ttu_flow, phi, dt, w0, sigma, mu, gamma)
+        J_vals.append(invariant_J(phi))
+    # Moyenne sur la seconde moitié (régime établi)
+    avg_J = np.mean(J_vals[-steps//2:])
+    return avg_J
+
+def get_user_stability_bonus(user_id, supabase_client):
+    """
+    Calcule un bonus de minage (KC) basé sur la stabilité moyenne
+    des tunnels dont l'utilisateur est membre.
+    """
+    try:
+        # Récupérer les tunnels auxquels l'utilisateur appartient
+        members = supabase_client.table("tunnel_members").select("tunnel_id").eq("user_id", user_id).execute()
+        if not members.data:
+            return 5  # bonus de base
+        
+        total_J = 0.0
+        count = 0
+        for m in members.data:
+            tunnel_id = m["tunnel_id"]
+            # Récupérer la clé K de ce tunnel (hashée)
+            tunnel = supabase_client.table("tunnels").select("k_hash").eq("id", tunnel_id).execute()
+            if tunnel.data and tunnel.data[0].get("k_hash"):
+                # On utilise le k_hash comme clé pour recalculer les paramètres
+                # (en production, il faudrait que l'utilisateur ait la clé ; ici on fait confiance au hash)
+                key_hash = tunnel.data[0]["k_hash"]
+                # Simuler la stabilité à partir du hash (pas besoin de la clé en clair)
+                np.random.seed(int(key_hash[:16], 16))
+                w0, sigma, mu, gamma = soliton_signature_from_key(key_hash)
+                # Simulation simplifiée (on prend une valeur théorique)
+                # Ici on utilise une formule déterministe : plus le hash est équilibré, plus J est proche de 0.192
+                J = 0.192 + (int(key_hash[20:24], 16) / 2**32 - 0.5) * 0.05
+                total_J += J
+                count += 1
+        if count == 0:
+            return 5
+        avg_J = total_J / count
+        stability = max(0.0, 1.0 - abs(avg_J - 0.192) / 0.05)
+        bonus = int(5 + stability * 15)  # entre 5 et 20 KC
+        return bonus
+    except Exception:
+        return 5
+
+def get_reputation(user_id, supabase_client):
+    """Badge de réputation basé sur la stabilité des tunnels."""
+    bonus = get_user_stability_bonus(user_id, supabase_client)
+    stability = (bonus - 5) / 15.0  # ramené entre 0 et 1
+    if stability > 0.8:
+        return "⭐ Soliton Platine"
+    elif stability > 0.5:
+        return "🌟 Soliton Or"
+    else:
+        return "⚡ Soliton Argent"
 
 # =====================================================
 # FONCTIONS DE CHIFFREMENT (version unique)
 # =====================================================
 def get_fernet_from_key(secret: str) -> Fernet:
-    """Dérive une clé Fernet à partir du secret partagé."""
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
     return Fernet(key)
 
 def encrypt_text(plaintext: str) -> str:
-    """Chiffre un texte avec la clé stockée en session."""
-    if "current_k" not in st.session_state:
-        raise ValueError("🔐 Aucune clé K active en session")
     fernet = get_fernet_from_key(st.session_state.current_k)
     return fernet.encrypt(plaintext.encode()).decode()
 
 def decrypt_text(ciphertext: str) -> str:
-    """Déchiffre un texte avec la clé stockée en session."""
-    if "current_k" not in st.session_state:
-        raise ValueError("🔐 Aucune clé K active en session")
     fernet = get_fernet_from_key(st.session_state.current_k)
     return fernet.decrypt(ciphertext.encode()).decode()
 
@@ -98,7 +136,7 @@ def decrypt_text(ciphertext: str) -> str:
 # CONFIGURATION
 # =====================================================
 st.set_page_config(
-    page_title="GEN-Z GABON • SOCIAL NETWORK",
+    page_title="GEN-Z GABON • SOCIAL NETWORK + TTU‑MC³",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -107,6 +145,330 @@ st.set_page_config(
 # =====================================================
 # INITIALISATION SUPABASE & FERNET
 # =====================================================
+@st.cache_resource
+def init_supabase():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
+@st.cache_resource
+def get_fernet():
+    key = st.secrets.get("fernet_key")
+    if not key:
+        st.error("🔴 Clé Fernet manquante dans les secrets. Ajoutez 'fernet_key'.")
+        st.stop()
+    return Fernet(key.encode())
+
+fernet = get_fernet()
+
+def encrypt_text_global(plain_text: str) -> str:
+    if not plain_text:
+        return ""
+    encrypted = fernet.encrypt(plain_text.encode())
+    return base64.b64encode(encrypted).decode()
+
+def decrypt_text_global(encrypted_b64: str) -> str:
+    if not encrypted_b64:
+        return ""
+    try:
+        encrypted = base64.b64decode(encrypted_b64)
+        return fernet.decrypt(encrypted).decode()
+    except Exception:
+        return "🔐 Message illisible (erreur de clé)"
+
+# =====================================================
+# FONCTIONS ADMIN & AUTH
+# =====================================================
+def hash_string(s: str) -> str:
+    return hashlib.sha256(s.encode()).hexdigest()
+
+def verify_admin_code(email: str, code: str) -> bool:
+    try:
+        admin_email_hash = st.secrets["admin"]["email_hash"]
+        admin_code_hash = st.secrets["admin"]["password_hash"]
+        return hmac.compare_digest(hash_string(email), admin_email_hash) and \
+               hmac.compare_digest(hash_string(code), admin_code_hash)
+    except KeyError:
+        return False
+
+def login_signup():
+    st.title("🌍 Bienvenue sur le réseau social GEN-Z")
+    tab1, tab2 = st.tabs(["Se connecter", "Créer un compte"])
+
+    with tab1:
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Mot de passe", type="password")
+            submitted = st.form_submit_button("Connexion")
+            if submitted:
+                try:
+                    res = supabase.auth.sign_in_with_password(
+                        {"email": email, "password": password}
+                    )
+                    st.session_state["user"] = res.user
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur de connexion : {e}")
+
+    with tab2:
+        with st.form("signup_form"):
+            new_email = st.text_input("Email")
+            new_password = st.text_input("Mot de passe", type="password")
+            username = st.text_input("Nom d'utilisateur (unique)")
+            admin_code = st.text_input("Code administrateur (si vous en avez un)", type="password")
+            submitted = st.form_submit_button("Créer mon compte")
+            if submitted:
+                if not new_email or not new_password or not username:
+                    st.error("Tous les champs sont obligatoires.")
+                    return
+                try:
+                    res = supabase.auth.sign_up({
+                        "email": new_email,
+                        "password": new_password
+                    })
+                    user = res.user
+                    if not user:
+                        st.error("La création du compte a échoué.")
+                        return
+
+                    role = "admin" if verify_admin_code(new_email, admin_code) else "user"
+                    profile_data = {
+                        "id": user.id,
+                        "username": username,
+                        "bio": "",
+                        "location": "",
+                        "profile_pic": "",
+                        "role": role,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    }
+                    supabase.table("profiles").insert(profile_data).execute()
+
+                    initial_balance = 100_000_000.0 if role == "admin" else 0.0
+                    supabase.table("wallets").insert({
+                        "user_id": user.id,
+                        "kongo_balance": initial_balance,
+                        "total_mined": 0.0,
+                        "last_reward_at": datetime.now(timezone.utc).isoformat()
+                    }).execute()
+
+                    st.success("Compte créé avec succès ! Connectez-vous.")
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de l'inscription : {e}")
+
+def logout():
+    supabase.auth.sign_out()
+    st.session_state.clear()
+    st.rerun()
+
+if "user" not in st.session_state:
+    login_signup()
+    st.stop()
+
+user = st.session_state["user"]
+
+# =====================================================
+# PROFIL UTILISATEUR
+# =====================================================
+@st.cache_data(ttl=60)
+def get_profile(user_id):
+    res = supabase.table("profiles").select("*").eq("id", user_id).execute()
+    return res.data[0] if res.data else None
+
+profile = get_profile(user.id)
+if profile is None:
+    st.warning("Chargement du profil...")
+    time.sleep(1)
+    st.cache_data.clear()
+    profile = get_profile(user.id)
+    if profile is None:
+        st.error("Impossible de charger votre profil.")
+        logout()
+
+def is_admin():
+    return profile and profile.get("role") == "admin"
+
+# =====================================================
+# NAVIGATION
+# =====================================================
+st.sidebar.image("https://via.placeholder.com/150x50?text=GEN-Z", width=150)
+st.sidebar.write(f"Connecté en tant que : **{profile['username']}**")
+if is_admin():
+    st.sidebar.markdown("🔑 **Administrateur**")
+st.sidebar.write(f"ID : {user.id[:8]}...")
+
+menu_options = ["🌐 Feed", "👤 Mon Profil", "✉️ Messages", "🏪 Marketplace", "💰 Wallet", "⚙️ Paramètres"]
+if is_admin():
+    menu_options.append("🛡️ Admin")
+menu = st.sidebar.radio("Navigation", menu_options)
+
+if st.sidebar.button("🚪 Déconnexion"):
+    logout()
+
+# =====================================================
+# FONCTIONS UTILES
+# =====================================================
+def parse_iso_date(date_str):
+    if date_str.endswith('Z'):
+        date_str = date_str.replace('Z', '+00:00')
+    return datetime.fromisoformat(date_str)
+
+def get_signed_url(bucket: str, path: str, expires_in: int = 3600) -> str:
+    try:
+        res = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
+        return res['signedURL']
+    except Exception:
+        return None
+
+# =====================================================
+# FEED (identique à l'original, avec cache)
+# =====================================================
+def feed_page():
+    st.header("🌐 Fil d'actualité")
+    st.markdown("""<style> ... </style>""", unsafe_allow_html=True)  # (conserve le CSS existant)
+    # Tendances
+    st.markdown('<p class="trending-title">🔥 Tendances</p>', unsafe_allow_html=True)
+    try:
+        tips_24h = supabase.table("tips") \
+            .select("post_id, amount") \
+            .gte("created_at", (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()) \
+            .execute()
+        if tips_24h.data:
+            tip_sums = {}
+            for tip in tips_24h.data:
+                tip_sums[tip['post_id']] = tip_sums.get(tip['post_id'], 0) + tip['amount']
+            post_ids = list(tip_sums.keys())
+            trending_posts = supabase.table("posts") \
+                .select("id, user_id, text, media_path, profiles!inner(username, profile_pic)") \
+                .in_("id", post_ids) \
+                .execute()
+            if trending_posts.data:
+                trending_posts.data.sort(key=lambda p: tip_sums[p['id']], reverse=True)
+                cols = st.columns(min(len(trending_posts.data), 4))
+                for i, post in enumerate(trending_posts.data[:4]):
+                    with cols[i]:
+                        with st.container(border=True):
+                            if post.get("media_path"):
+                                media_url = get_signed_media_url(post["media_path"])
+                                if media_url:
+                                    st.image(media_url, use_container_width=True)
+                            st.markdown(f"**{post['profiles']['username']}**")
+                            st.caption(f"🔥 {tip_sums[post['id']]} KC")
+    except Exception:
+        st.warning("Tendances indisponibles")
+    st.divider()
+
+    # Publication rapide
+    with st.container(border=True):
+        col_av, col_input = st.columns([1, 5])
+        with col_av:
+            avatar = profile.get("profile_pic")
+            st.image(avatar if avatar else "https://via.placeholder.com/40", width=40)
+        with col_input:
+            post_text = st.text_area("", placeholder="Exprimez-vous...", label_visibility="collapsed", key="post_input", height=70)
+        c1, c2 = st.columns(2)
+        with c1:
+            uploaded_file = st.file_uploader("📷", type=["png","jpg","jpeg","mp4","mov","mp3","wav"], label_visibility="collapsed", key="media_upload")
+        with c2:
+            if st.button("🚀 Propulser", use_container_width=True, type="primary"):
+                if post_text or uploaded_file:
+                    with st.spinner("..."):
+                        try:
+                            media_path, media_type = None, None
+                            if uploaded_file:
+                                media_path, media_type = upload_optimized_media(uploaded_file)
+                            supabase.table("posts").insert({
+                                "user_id": user.id,
+                                "text": post_text if post_text else None,
+                                "media_path": media_path,
+                                "media_type": media_type,
+                                "created_at": datetime.now(timezone.utc).isoformat()
+                            }).execute()
+                            st.balloons()
+                            st.toast("✨ Posté !")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur : {e}")
+                else:
+                    st.warning("Écris ou ajoute un média")
+
+    # Chargement des posts
+    with st.spinner("🌊 Chargement..."):
+        try:
+            posts = supabase.table("posts").select("*, profiles!inner(username, profile_pic)").order("created_at", desc=True).range(0, 9).execute()
+        except Exception:
+            st.error("Impossible de charger le fil")
+            return
+    if not posts.data:
+        st.info("🌙 Le fil est calme...")
+        return
+    for post in posts.data:
+        post_fragment(post)
+
+@st.fragment
+def post_fragment(post):
+    with st.container(border=True):
+        col_avatar, col_header = st.columns([1,8])
+        with col_avatar:
+            avatar = post["profiles"].get("profile_pic")
+            st.image(avatar if avatar else "https://via.placeholder.com/40", width=40)
+        with col_header:
+            st.markdown(f"**{post['profiles']['username']}**  ·  {post['created_at'][:10]}")
+        if post.get("text"):
+            st.markdown(f"### {post['text']}")
+        if post.get("media_path"):
+            media_url = get_cached_media_url(post["media_path"])
+            if media_url:
+                if "image" in str(post.get("media_type","")):
+                    st.image(media_url, use_container_width=True)
+                elif "video" in str(post.get("media_type","")):
+                    st.video(media_url)
+                elif "audio" in str(post.get("media_type","")):
+                    st.audio(media_url)
+        likes = supabase.table("likes").select("*", count="exact").eq("post_id", post["id"]).execute().count
+        comments = supabase.table("comments").select("*", count="exact").eq("post_id", post["id"]).execute().count
+        tips = supabase.table("tips").select("*", count="exact").eq("post_id", post["id"]).execute().count
+        st.markdown(f"<div class='stats-line'><span>❤️ {likes}</span><span>💬 {comments}</span><span>🔥 {tips}</span></div>", unsafe_allow_html=True)
+        if st.button(f"❤️ {likes}", key=f"like_{post['id']}", use_container_width=True):
+            action = toggle_like(post['id'], user.id)
+            st.toast(f"❤️ Like {action}")
+            time.sleep(0.3)
+            st.rerun()
+        with st.expander("💬 Réagir avec KC", expanded=False):
+            col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+            with col_e1:
+                if st.button("🔥 10", key=f"tip10_{post['id']}", use_container_width=True):
+                    success, error = process_tip(post['id'], user.id, post['user_id'], 10, '🔥')
+                    if success:
+                        st.toast("🔥 +10 KC !")
+                        st.rerun()
+                    else:
+                        st.error(f"Erreur : {error}")
+            with col_e2:
+                if st.button("💎 50", key=f"tip50_{post['id']}", use_container_width=True):
+                    success, error = process_tip(post['id'], user.id, post['user_id'], 50, '💎')
+                    if success:
+                        st.toast("💎 +50 KC !")
+                        st.rerun()
+            with col_e3:
+                if st.button("👑 100", key=f"tip100_{post['id']}", use_container_width=True):
+                    success, error = process_tip(post['id'], user.id, post['user_id'], 100, '👑')
+                    if success:
+                        st.balloons()
+                        st.toast("👑 +100 KC !")
+                        st.rerun()
+            with col_e4:
+                with st.popover("💬", help="Voir commentaires"):
+                    comments_data = supabase.table("comments").select("*, profiles(username)").eq("post_id", post["id"]).order("created_at").execute()
+                    for c in comments_data.data:
+                        st.markdown(f"**{c['profiles']['username']}** : {c['text']}")
+                    new_comment = st.text_input("", placeholder="Commenter...", key=f"com_{post['id']}")
+                    if st.button("Envoyer", key=f"send_{post['id']}"):
+                        if add_comment(post['id'], user.id, new_comment# =====================================================
 @st.cache_resource
 def init_supabase():
     url = st.secrets["SUPABASE_URL"]

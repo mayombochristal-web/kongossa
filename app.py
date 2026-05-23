@@ -14,6 +14,7 @@ import logging
 import functools
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import numpy as np
+import socket
 
 # =====================================================
 # CONFIGURATION LOGGING
@@ -28,7 +29,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 Mo
 CIRCUIT_BREAKER_COOLDOWN = 60
 
 # =====================================================
-# INTÉGRATION TTU‑MC³ (sans simulateur visible)
+# INTÉGRATION TTU‑MC³
 # =====================================================
 
 def soliton_signature_from_key(shared_key: str):
@@ -39,25 +40,6 @@ def soliton_signature_from_key(shared_key: str):
     mu = (int.from_bytes(h[8:12], 'big') / 2**32) * 0.05
     gamma = (int.from_bytes(h[12:16], 'big') / 2**32) * 0.2
     return w0, sigma, mu, gamma
-
-def rk4_step(f, y, dt, *args):
-    k1 = f(y, *args)
-    k2 = f(y + 0.5 * dt * k1, *args)
-    k3 = f(y + 0.5 * dt * k2, *args)
-    k4 = f(y + dt * k3, *args)
-    return y + dt * (k1 + 2*k2 + 2*k3 + k4) / 6
-
-def ttu_flow(phi, omega0, sigma, mu, gamma):
-    Phi_M, Phi_C, Phi_D = phi
-    dPhi_M = Phi_C
-    dPhi_C = -omega0**2 * Phi_M + sigma**2 * Phi_D - mu * Phi_C - gamma * Phi_M**3
-    dPhi_D = -Phi_C - mu * Phi_D
-    return np.array([dPhi_M, dPhi_C, dPhi_D])
-
-def invariant_J(phi):
-    Phi_M, Phi_C, Phi_D = phi
-    denom = (Phi_M**2 + Phi_C**2 + Phi_D**2)**1.5 + 1e-12
-    return (Phi_M * Phi_C * Phi_D) / denom
 
 def get_user_stability_bonus(user_id, supabase_client):
     """Calcule un bonus de minage (KC) basé sur la stabilité moyenne des tunnels de l'utilisateur."""
@@ -72,7 +54,6 @@ def get_user_stability_bonus(user_id, supabase_client):
             tunnel = supabase_client.table("tunnels").select("k_hash").eq("id", tunnel_id).execute()
             if tunnel.data and tunnel.data[0].get("k_hash"):
                 key_hash = tunnel.data[0]["k_hash"]
-                np.random.seed(int(key_hash[:16], 16))
                 # Approximation de J à partir du hash
                 J = 0.192 + (int(key_hash[20:24], 16) / 2**32 - 0.5) * 0.05
                 total_J += J
@@ -128,21 +109,10 @@ def retry(max_attempts=3, delay=1):
         return wrapper
     return decorator
 
-def execute_with_timeout(func, timeout=5, *args, **kwargs):
-    with ThreadPoolExecutor() as executor:
-        future = executor.submit(func, *args, **kwargs)
-        try:
-            return future.result(timeout=timeout)
-        except TimeoutError:
-            st.error("⏱️ Le serveur met trop de temps à répondre. Réessayez plus tard.")
-            return None
-        except Exception as e:
-            raise e
-
 # =====================================================
 # FONCTIONS DE CHIFFREMENT (tunnels)
 # =====================================================
-def get_fernet_from_key(secret: str) -> Fernet:
+def get_fernet_from_key(secret: str):
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
     return Fernet(key)
 
@@ -169,7 +139,7 @@ st.set_page_config(
 )
 
 # =====================================================
-# INITIALISATION SUPABASE & FERNET GLOBAL
+# INITIALISATION SUPABASE AVEC TEST DNS
 # =====================================================
 @st.cache_resource
 def init_supabase():
@@ -187,6 +157,17 @@ def init_supabase():
         st.error("❌ L'URL Supabase doit commencer par https://")
         st.stop()
 
+    # Test DNS explicite
+    hostname = url.replace("https://", "").split("/")[0]
+    try:
+        ip = socket.gethostbyname(hostname)
+        logger.info(f"DNS OK : {hostname} -> {ip}")
+    except Exception as dns_err:
+        st.error(f"🌐 Le serveur ne peut pas résoudre {hostname}.")
+        st.error(f"Détail : {dns_err}")
+        st.info("Vérifiez votre connexion réseau ou contactez le support de votre hébergeur.")
+        st.stop()
+
     try:
         client = create_client(url, key)
         # Test rapide de connexion
@@ -194,25 +175,24 @@ def init_supabase():
         return client
     except Exception as e:
         st.error(f"🚨 Impossible de se connecter à Supabase : {e}")
-        st.info("Vérifiez votre connexion internet et que l'URL du projet est correcte.")
         st.stop()
 
 supabase = init_supabase()
 
 @st.cache_resource
-def get_fernet():
+def get_fernet_global():
     key = st.secrets.get("fernet_key")
     if not key:
         st.error("🔴 Clé Fernet manquante dans les secrets. Ajoutez 'fernet_key'.")
         st.stop()
     return Fernet(key.encode())
 
-fernet = get_fernet()
+fernet_global = get_fernet_global()
 
 def encrypt_text_global(plain_text: str) -> str:
     if not plain_text:
         return ""
-    encrypted = fernet.encrypt(plain_text.encode())
+    encrypted = fernet_global.encrypt(plain_text.encode())
     return base64.b64encode(encrypted).decode()
 
 def decrypt_text_global(encrypted_b64: str) -> str:
@@ -220,7 +200,7 @@ def decrypt_text_global(encrypted_b64: str) -> str:
         return ""
     try:
         encrypted = base64.b64decode(encrypted_b64)
-        return fernet.decrypt(encrypted).decode()
+        return fernet_global.decrypt(encrypted).decode()
     except Exception:
         return "🔐 Message illisible (erreur de clé)"
 
@@ -368,14 +348,6 @@ def supabase_delete(table, conditions):
     return query.execute()
 
 @retry(max_attempts=3, delay=1)
-def supabase_select(table, columns="*", conditions=None):
-    query = supabase.table(table).select(columns)
-    if conditions:
-        for col, val in conditions.items():
-            query = query.eq(col, val)
-    return query.execute()
-
-@retry(max_attempts=3, delay=1)
 def supabase_rpc(rpc_name, params):
     return supabase.rpc(rpc_name, params).execute()
 
@@ -510,7 +482,6 @@ def feed_page():
     if "post_draft" not in st.session_state:
         st.session_state.post_draft = ""
 
-    # CSS simplifié (vous pouvez le compléter)
     st.markdown("""
         <style>
         .trending-title { font-size: 1.5rem; font-weight: 600; background: linear-gradient(45deg, #ff9d00, #ff4b4b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }
@@ -1226,7 +1197,7 @@ def buy_kc_page():
             st.warning("Impossible de charger l'historique.")
 
 # =====================================================
-# PAGE WALLET (minage basé sur stabilité TTU)
+# PAGE WALLET
 # =====================================================
 @safe_run
 def wallet_page():
@@ -1275,14 +1246,11 @@ def wallet_page():
     st.info("Historique des transactions bientôt disponible.")
 
 # =====================================================
-# PAGE MARKETPLACE (simplifiée, avec badge TTU)
+# PAGE MARKETPLACE (simplifiée avec badge)
 # =====================================================
 @safe_run
 def marketplace_page():
     st.header("🏪 Marketplace Souverain")
-    st.info("Le marketplace est opérationnel. Les vendeurs avec une bonne réputation TTU bénéficient d'un badge.")
-    # Ici vous pouvez recopier votre code marketplace existant.
-    # Pour l'exemple, on affiche juste les annonces actives.
     try:
         listings = supabase.table("marketplace_listings").select("*, profiles(username)").eq("is_active", True).order("created_at", desc=True).execute()
         if not listings.data:
@@ -1290,10 +1258,25 @@ def marketplace_page():
             return
         for item in listings.data:
             with st.container(border=True):
-                st.markdown(f"**{item['title']}** - {item['price_kc']} KC")
-                st.caption(f"Vendeur: {item['profiles']['username']} {get_reputation(item['user_id'], supabase)}")
+                col1, col2 = st.columns([3,1])
+                col1.markdown(f"**{item['title']}** - {item['price_kc']} KC")
+                col2.markdown(get_reputation(item['user_id'], supabase))
+                st.caption(f"Vendeur: {item['profiles']['username']}")
                 with st.expander("Description"):
                     st.write(item['description'])
+                if item["user_id"] != user.id:
+                    if st.button("🛒 Acheter", key=f"buy_{item['id']}"):
+                        try:
+                            supabase.rpc('process_marketplace_purchase', {
+                                'p_listing_id': item['id'],
+                                'p_buyer_id': user.id,
+                                'p_seller_id': item['user_id'],
+                                'p_amount': float(item['price_kc'])
+                            }).execute()
+                            st.success("Achat réussi !")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur achat : {e}")
     except Exception as e:
         st.error(f"Erreur chargement marketplace : {e}")
 

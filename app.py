@@ -129,17 +129,24 @@ def decrypt_text(ciphertext: str) -> str:
     return fernet.decrypt(ciphertext.encode()).decode()
 
 # =====================================================
-# CONFIGURATION STREAMLIT
+# CONFIGURATION STREAMLIT + PWA (optionnelle)
 # =====================================================
 st.set_page_config(
     page_title="GEN-Z GABON • SOCIAL NETWORK",
-    page_icon="🌍",
+    page_icon="https://raw.githubusercontent.com/mayombochristal-web/kongossa/main/file_0000000092d0724685e7949098fddf21.png",  # favicon
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
+# Activation PWA (à décommenter si vous hébergez un manifest.json)
+# st.markdown("""
+#     <link rel="manifest" href="https://votre-domaine.com/static/manifest.json">
+#     <meta name="theme-color" content="#0e1117">
+#     <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/mayombochristal-web/kongossa/main/file_0000000007f0720a8b125b7c216afeb6.png">
+# """, unsafe_allow_html=True)
+
 # =====================================================
-# INITIALISATION SUPABASE AVEC TEST DNS
+# INITIALISATION SUPABASE (sans test DNS bloquant)
 # =====================================================
 @st.cache_resource
 def init_supabase():
@@ -157,21 +164,19 @@ def init_supabase():
         st.error("❌ L'URL Supabase doit commencer par https://")
         st.stop()
 
-    # Test DNS explicite
+    # Test DNS non bloquant (simple log)
     hostname = url.replace("https://", "").split("/")[0]
     try:
         ip = socket.gethostbyname(hostname)
         logger.info(f"DNS OK : {hostname} -> {ip}")
     except Exception as dns_err:
-        st.error(f"🌐 Le serveur ne peut pas résoudre {hostname}.")
-        st.error(f"Détail : {dns_err}")
-        st.info("Vérifiez votre connexion réseau ou contactez le support de votre hébergeur.")
-        st.stop()
+        logger.warning(f"Impossible de résoudre {hostname} : {dns_err}")
+        # On continue, le client Supabase gérera la résolution
 
     try:
         client = create_client(url, key)
-        # Test rapide de connexion
-        client.table("profiles").select("id").limit(1).execute()
+        # Test rapide de connexion (optionnel, mais peut être lent)
+        # client.table("profiles").select("id").limit(1).execute()
         return client
     except Exception as e:
         st.error(f"🚨 Impossible de se connecter à Supabase : {e}")
@@ -230,6 +235,13 @@ def parse_iso_date(date_str: str) -> datetime:
 @safe_run
 def login_signup():
     st.title("🌍 Bienvenue sur le réseau social GEN-Z")
+
+    # Logo
+    logo_url = "https://raw.githubusercontent.com/mayombochristal-web/kongossa/main/file_0000000007f0720a8b125b7c216afeb6.png"
+    col_logo, col_empty = st.columns([1, 5])
+    with col_logo:
+        st.image(logo_url, width=120)
+
     tab1, tab2 = st.tabs(["Se connecter", "Créer un compte"])
 
     with tab1:
@@ -315,7 +327,8 @@ def is_admin():
 # =====================================================
 # NAVIGATION
 # =====================================================
-st.sidebar.image("https://via.placeholder.com/150x50?text=GEN-Z", width=150)
+logo_sidebar = "https://raw.githubusercontent.com/mayombochristal-web/kongossa/main/file_0000000007f0720a8b125b7c216afeb6.png"
+st.sidebar.image(logo_sidebar, width=150)
 st.sidebar.write(f"Connecté en tant que : **{profile['username']}**")
 if is_admin():
     st.sidebar.markdown("🔑 **Administrateur**")
@@ -654,11 +667,19 @@ def feed_page():
                         st.rerun()
 
 # =====================================================
-# PAGE PROFIL (avec badge TTU)
+# PAGE PROFIL (avec badge TTU et logo)
 # =====================================================
 @safe_run
 def profile_page():
     st.header("👤 Mon Profil Souverain")
+    # Logo
+    logo_url = "https://raw.githubusercontent.com/mayombochristal-web/kongossa/main/file_0000000007f0720a8b125b7c216afeb6.png"
+    col_logo, col_title = st.columns([1, 5])
+    with col_logo:
+        st.image(logo_url, width=80)
+    with col_title:
+        st.markdown("## KONGOSSA")
+
     st.markdown("""
         <style>
         .badge { display: inline-block; background: linear-gradient(45deg, #ff9d00, #ff4b4b); color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; margin-right: 8px; }
